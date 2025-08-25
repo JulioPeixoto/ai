@@ -165,7 +165,7 @@ describe('parseToolCall', () => {
       {
         "dynamic": true,
         "error": [AI_NoSuchToolError: Model tried to call unavailable tool 'testTool'. No tools are available.],
-        "input": "{}",
+        "input": {},
         "invalid": true,
         "toolCallId": "123",
         "toolName": "testTool",
@@ -199,7 +199,7 @@ describe('parseToolCall', () => {
       {
         "dynamic": true,
         "error": [AI_NoSuchToolError: Model tried to call unavailable tool 'nonExistentTool'. Available tools: testTool.],
-        "input": "{}",
+        "input": {},
         "invalid": true,
         "toolCallId": "123",
         "toolName": "nonExistentTool",
@@ -208,7 +208,7 @@ describe('parseToolCall', () => {
     `);
   });
 
-  it('should throw InvalidToolArgumentsError when args are invalid', async () => {
+  it('should throw InvalidToolInputError when args are invalid', async () => {
     const result = await parseToolCall({
       toolCall: {
         type: 'tool-call',
@@ -243,7 +243,9 @@ describe('parseToolCall', () => {
           "message": "Invalid input: expected number, received undefined"
         }
       ]],
-        "input": "{"param1": "test"}",
+        "input": {
+          "param1": "test",
+        },
         "invalid": true,
         "toolCallId": "123",
         "toolName": "testTool",

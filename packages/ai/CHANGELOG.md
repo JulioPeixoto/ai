@@ -1,5 +1,75 @@
 # ai
 
+## 5.0.23
+
+### Patch Changes
+
+- 5099b3d: fix(ai): make `chat.addToolResult()` compatible with dynamic tool calls
+- 7a2bf8d: fix(ai): support loop breaking behavior in async iterable stream
+- Updated dependencies [50e2029]
+- Updated dependencies [b8478f0]
+  - @ai-sdk/gateway@1.0.12
+
+## 5.0.22
+
+### Patch Changes
+
+- Updated dependencies [926259f]
+- Updated dependencies [c000f96]
+  - @ai-sdk/gateway@1.0.11
+
+## 5.0.21
+
+### Patch Changes
+
+- 581abea: fix(ai): call abort callback when stream is aborted during tool execution
+- 3c178ec: feat(ai): improved type checking for prompt/messages input
+- Updated dependencies [0857788]
+  - @ai-sdk/provider-utils@3.0.5
+  - @ai-sdk/gateway@1.0.10
+
+## 5.0.20
+
+### Patch Changes
+
+- 8a87693: fix(ai) Make sure warnings promise in streamObject is resolved and properly collects and passes warnings
+
+## 5.0.19
+
+### Patch Changes
+
+- 8da6e9c: fix(ai): use parsed tool input if possible when validation fails
+
+## 5.0.18
+
+### Patch Changes
+
+- Updated dependencies [8b96f99]
+  - @ai-sdk/gateway@1.0.9
+
+## 5.0.17
+
+### Patch Changes
+
+- 4176ecb: feat(ai): add reasoning text to generateObject result
+- 20f23f9: feat(ai): export LanguageModelMiddleware type
+
+## 5.0.16
+
+### Patch Changes
+
+- Updated dependencies [68751f9]
+  - @ai-sdk/provider-utils@3.0.4
+  - @ai-sdk/gateway@1.0.8
+
+## 5.0.15
+
+### Patch Changes
+
+- ca4f68f: feat(ai): add validateUIMessages function
+- Updated dependencies [28a4006]
+  - @ai-sdk/gateway@1.0.7
+
 ## 5.0.14
 
 ### Patch Changes

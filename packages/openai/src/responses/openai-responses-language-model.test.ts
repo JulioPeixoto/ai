@@ -2178,6 +2178,19 @@ describe('OpenAIResponsesLanguageModel', () => {
                 type: 'web_search_call',
                 id: 'ws_67cf2b3051e88190b006770db6fdb13d',
                 status: 'completed',
+                action: {
+                  type: 'search',
+                  query: 'Vercel AI SDK next version features',
+                },
+              },
+              {
+                type: 'web_search_call',
+                id: 'ws_67cf2b3051e88190b006234456fdb13d',
+                status: 'completed',
+                action: {
+                  type: 'search',
+                  // sometimes search calls do not have a query
+                },
               },
               {
                 type: 'message',
@@ -2287,7 +2300,7 @@ describe('OpenAIResponsesLanguageModel', () => {
         expect(result.content).toMatchInlineSnapshot(`
           [
             {
-              "input": "",
+              "input": "{"action":{"type":"search","query":"Vercel AI SDK next version features"}}",
               "providerExecuted": true,
               "toolCallId": "ws_67cf2b3051e88190b006770db6fdb13d",
               "toolName": "web_search_preview",
@@ -2299,6 +2312,22 @@ describe('OpenAIResponsesLanguageModel', () => {
                 "status": "completed",
               },
               "toolCallId": "ws_67cf2b3051e88190b006770db6fdb13d",
+              "toolName": "web_search_preview",
+              "type": "tool-result",
+            },
+            {
+              "input": "{"action":{"type":"search"}}",
+              "providerExecuted": true,
+              "toolCallId": "ws_67cf2b3051e88190b006234456fdb13d",
+              "toolName": "web_search_preview",
+              "type": "tool-call",
+            },
+            {
+              "providerExecuted": true,
+              "result": {
+                "status": "completed",
+              },
+              "toolCallId": "ws_67cf2b3051e88190b006234456fdb13d",
               "toolName": "web_search_preview",
               "type": "tool-result",
             },
@@ -2501,6 +2530,102 @@ describe('OpenAIResponsesLanguageModel', () => {
                 },
               },
               "text": "Based on the search results, here is the information you requested.",
+              "type": "text",
+            },
+          ]
+        `);
+      });
+
+      it('should handle web search with action query field', async () => {
+        server.urls['https://api.openai.com/v1/responses'].response = {
+          type: 'json-value',
+          body: {
+            id: 'resp_test',
+            object: 'response',
+            created_at: 1741630255,
+            status: 'completed',
+            error: null,
+            incomplete_details: null,
+            instructions: null,
+            max_output_tokens: null,
+            model: 'o3-2025-04-16',
+            output: [
+              {
+                type: 'web_search_call',
+                id: 'ws_test',
+                status: 'completed',
+                action: {
+                  type: 'search',
+                  query: 'Vercel AI SDK next version features',
+                },
+              },
+              {
+                type: 'message',
+                id: 'msg_test',
+                status: 'completed',
+                role: 'assistant',
+                content: [
+                  {
+                    type: 'output_text',
+                    text: 'Based on the search results, here are the upcoming features.',
+                    annotations: [],
+                  },
+                ],
+              },
+            ],
+            parallel_tool_calls: true,
+            previous_response_id: null,
+            reasoning: { effort: null, summary: null },
+            store: true,
+            temperature: 0,
+            text: { format: { type: 'text' } },
+            tool_choice: 'auto',
+            tools: [
+              { type: 'web_search_preview', search_context_size: 'medium' },
+            ],
+            top_p: 1,
+            truncation: 'disabled',
+            usage: {
+              input_tokens: 50,
+              input_tokens_details: { cached_tokens: 0 },
+              output_tokens: 25,
+              output_tokens_details: { reasoning_tokens: 0 },
+              total_tokens: 75,
+            },
+            user: null,
+            metadata: {},
+          },
+        };
+
+        const result = await createModel('o3-2025-04-16').doGenerate({
+          prompt: TEST_PROMPT,
+        });
+
+        expect(result.content).toMatchInlineSnapshot(`
+          [
+            {
+              "input": "{"action":{"type":"search","query":"Vercel AI SDK next version features"}}",
+              "providerExecuted": true,
+              "toolCallId": "ws_test",
+              "toolName": "web_search_preview",
+              "type": "tool-call",
+            },
+            {
+              "providerExecuted": true,
+              "result": {
+                "status": "completed",
+              },
+              "toolCallId": "ws_test",
+              "toolName": "web_search_preview",
+              "type": "tool-result",
+            },
+            {
+              "providerMetadata": {
+                "openai": {
+                  "itemId": "msg_test",
+                },
+              },
+              "text": "Based on the search results, here are the upcoming features.",
               "type": "text",
             },
           ]
@@ -2757,12 +2882,12 @@ describe('OpenAIResponsesLanguageModel', () => {
           `data:{"type":"response.created","response":{"id":"resp_67c9a81b6a048190a9ee441c5755a4e8","object":"response","created_at":1741269019,"status":"in_progress","error":null,"incomplete_details":null,"input":[],"instructions":null,"max_output_tokens":null,"model":"gpt-4o-2024-07-18","output":[],"parallel_tool_calls":true,"previous_response_id":null,"reasoning":{"effort":null,"summary":null},"store":true,"temperature":0.3,"text":{"format":{"type":"text"}},"tool_choice":"auto","tools":[],"top_p":1,"truncation":"disabled","usage":null,"user":null,"metadata":{}}}\n\n`,
           `data:{"type":"response.in_progress","response":{"id":"resp_67c9a81b6a048190a9ee441c5755a4e8","object":"response","created_at":1741269019,"status":"in_progress","error":null,"incomplete_details":null,"input":[],"instructions":null,"max_output_tokens":null,"model":"gpt-4o-2024-07-18","output":[],"parallel_tool_calls":true,"previous_response_id":null,"reasoning":{"effort":null,"summary":null},"store":true,"temperature":0.3,"text":{"format":{"type":"text"}},"tool_choice":"auto","tools":[],"top_p":1,"truncation":"disabled","usage":null,"user":null,"metadata":{}}}\n\n`,
           `data:{"type":"response.output_item.added","output_index":0,"item":{"id":"msg_67c9a81dea8c8190b79651a2b3adf91e","type":"message","status":"in_progress","role":"assistant","content":[]}}\n\n`,
-          `data:{"type":"response.content_part.added","item_id":"msg_67c9a81dea8c8190b79651a2b3adf91e","output_index":0,"content_index":0,"part":{"type":"output_text","text":"","annotations":[]}}\n\n`,
-          `data:{"type":"response.output_text.delta","item_id":"msg_67c9a81dea8c8190b79651a2b3adf91e","output_index":0,"content_index":0,"delta":"Hello,"}\n\n`,
-          `data:{"type":"response.output_text.delta","item_id":"msg_67c9a81dea8c8190b79651a2b3adf91e","output_index":0,"content_index":0,"delta":" World!"}\n\n`,
+          `data:{"type":"response.content_part.added","item_id":"msg_67c9a81dea8c8190b79651a2b3adf91e","output_index":0,"content_index":0,"part":{"type":"output_text","text":"","annotations":[],"logprobs": []}}\n\n`,
+          `data:{"type":"response.output_text.delta","item_id":"msg_67c9a81dea8c8190b79651a2b3adf91e","output_index":0,"content_index":0,"delta":"Hello,","logprobs": []}\n\n`,
+          `data:{"type":"response.output_text.delta","item_id":"msg_67c9a81dea8c8190b79651a2b3adf91e","output_index":0,"content_index":0,"delta":" World!","logprobs": []}\n\n`,
           `data:{"type":"response.output_text.done","item_id":"msg_67c9a8787f4c8190b49c858d4c1cf20c","output_index":0,"content_index":0,"text":"Hello, World!"}\n\n`,
-          `data:{"type":"response.content_part.done","item_id":"msg_67c9a8787f4c8190b49c858d4c1cf20c","output_index":0,"content_index":0,"part":{"type":"output_text","text":"Hello, World!","annotations":[]}}\n\n`,
-          `data:{"type":"response.output_item.done","output_index":0,"item":{"id":"msg_67c9a8787f4c8190b49c858d4c1cf20c","type":"message","status":"completed","role":"assistant","content":[{"type":"output_text","text":"Hello, World!","annotations":[]}]}}\n\n`,
+          `data:{"type":"response.content_part.done","item_id":"msg_67c9a8787f4c8190b49c858d4c1cf20c","output_index":0,"content_index":0,"part":{"type":"output_text","text":"Hello, World!","annotations":[],"logprobs": []}}\n\n`,
+          `data:{"type":"response.output_item.done","output_index":0,"item":{"id":"msg_67c9a8787f4c8190b49c858d4c1cf20c","type":"message","status":"completed","role":"assistant","content":[{"type":"output_text","text":"Hello, World!","annotations":[],"logprobs": []}]}}\n\n`,
           `data:{"type":"response.completed","response":{"id":"resp_67c9a878139c8190aa2e3105411b408b","object":"response","created_at":1741269112,"status":"completed","error":null,"incomplete_details":null,"input":[],"instructions":null,"max_output_tokens":null,"model":"gpt-4o-2024-07-18","output":[{"id":"msg_67c9a8787f4c8190b49c858d4c1cf20c","type":"message","status":"completed","role":"assistant","content":[{"type":"output_text","text":"Hello, World!","annotations":[]}]}],"parallel_tool_calls":true,"previous_response_id":null,"reasoning":{"effort":null,"summary":null},"store":true,"temperature":0.3,"text":{"format":{"type":"text"}},"tool_choice":"auto","tools":[],"top_p":1,"truncation":"disabled","usage":{"input_tokens":543,"input_tokens_details":{"cached_tokens":234},"output_tokens":478,"output_tokens_details":{"reasoning_tokens":123},"total_tokens":512},"user":null,"metadata":{}}}\n\n`,
         ],
       };
@@ -2821,6 +2946,108 @@ describe('OpenAIResponsesLanguageModel', () => {
               "outputTokens": 478,
               "reasoningTokens": 123,
               "totalTokens": 1021,
+            },
+          },
+        ]
+      `);
+    });
+
+    it('should handle streaming web search with action query field', async () => {
+      server.urls['https://api.openai.com/v1/responses'].response = {
+        type: 'stream-chunks',
+        chunks: [
+          `data:{"type":"response.created","response":{"id":"resp_test","object":"response","created_at":1741630255,"status":"in_progress","error":null,"incomplete_details":null,"instructions":null,"max_output_tokens":null,"model":"o3-2025-04-16","output":[],"parallel_tool_calls":true,"previous_response_id":null,"reasoning":{"effort":"medium","summary":"auto"},"store":true,"temperature":0,"text":{"format":{"type":"text"}},"tool_choice":"auto","tools":[{"type":"web_search_preview","search_context_size":"medium"}],"top_p":1,"truncation":"disabled","usage":null,"user":null,"metadata":{}}}\n\n`,
+          `data:{"type":"response.output_item.added","output_index":0,"item":{"type":"web_search_call","id":"ws_test","status":"in_progress","action":{"type":"search","query":"Vercel AI SDK next version features"}}}\n\n`,
+          `data:{"type":"response.web_search_call.in_progress","output_index":0,"item_id":"ws_test"}\n\n`,
+          `data:{"type":"response.web_search_call.searching","output_index":0,"item_id":"ws_test"}\n\n`,
+          `data:{"type":"response.web_search_call.completed","output_index":0,"item_id":"ws_test"}\n\n`,
+          `data:{"type":"response.output_item.done","output_index":0,"item":{"type":"web_search_call","id":"ws_test","status":"completed","action":{"type":"search","query":"Vercel AI SDK next version features"}}}\n\n`,
+          `data:{"type":"response.output_item.added","output_index":1,"item":{"type":"message","id":"msg_test","status":"in_progress","role":"assistant","content":[]}}\n\n`,
+          `data:{"type":"response.content_part.added","item_id":"msg_test","output_index":1,"content_index":0,"part":{"type":"output_text","text":"","annotations":[]}}\n\n`,
+          `data:{"type":"response.output_text.delta","item_id":"msg_test","output_index":1,"content_index":0,"delta":"Based on the search results, here are the upcoming features."}\n\n`,
+          `data:{"type":"response.output_text.done","item_id":"msg_test","output_index":1,"content_index":0,"text":"Based on the search results, here are the upcoming features."}\n\n`,
+          `data:{"type":"response.content_part.done","item_id":"msg_test","output_index":1,"content_index":0,"part":{"type":"output_text","text":"Based on the search results, here are the upcoming features.","annotations":[]}}\n\n`,
+          `data:{"type":"response.output_item.done","output_index":1,"item":{"type":"message","id":"msg_test","status":"completed","role":"assistant","content":[{"type":"output_text","text":"Based on the search results, here are the upcoming features.","annotations":[]}]}}\n\n`,
+          `data:{"type":"response.completed","response":{"id":"resp_test","object":"response","created_at":1741630255,"status":"completed","error":null,"incomplete_details":null,"instructions":null,"max_output_tokens":null,"model":"o3-2025-04-16","output":[{"type":"web_search_call","id":"ws_test","status":"completed","action":{"type":"search","query":"Vercel AI SDK next version features"}},{"type":"message","id":"msg_test","status":"completed","role":"assistant","content":[{"type":"output_text","text":"Based on the search results, here are the upcoming features.","annotations":[]}]}],"parallel_tool_calls":true,"previous_response_id":null,"reasoning":{"effort":"medium","summary":"auto"},"store":true,"temperature":0,"text":{"format":{"type":"text"}},"tool_choice":"auto","tools":[{"type":"web_search_preview","search_context_size":"medium"}],"top_p":1,"truncation":"disabled","usage":{"input_tokens":50,"input_tokens_details":{"cached_tokens":0},"output_tokens":25,"output_tokens_details":{"reasoning_tokens":0},"total_tokens":75},"user":null,"metadata":{}}}\n\n`,
+          'data: [DONE]\n\n',
+        ],
+      };
+
+      const { stream } = await createModel('o3-2025-04-16').doStream({
+        prompt: TEST_PROMPT,
+        includeRawChunks: false,
+      });
+
+      const result = await convertReadableStreamToArray(stream);
+      expect(result).toMatchInlineSnapshot(`
+        [
+          {
+            "type": "stream-start",
+            "warnings": [],
+          },
+          {
+            "id": "resp_test",
+            "modelId": "o3-2025-04-16",
+            "timestamp": 2025-03-10T18:10:55.000Z,
+            "type": "response-metadata",
+          },
+          {
+            "id": "ws_test",
+            "toolName": "web_search_preview",
+            "type": "tool-input-start",
+          },
+          {
+            "id": "ws_test",
+            "type": "tool-input-end",
+          },
+          {
+            "input": "{"action":{"type":"search","query":"Vercel AI SDK next version features"}}",
+            "providerExecuted": true,
+            "toolCallId": "ws_test",
+            "toolName": "web_search_preview",
+            "type": "tool-call",
+          },
+          {
+            "providerExecuted": true,
+            "result": {
+              "status": "completed",
+            },
+            "toolCallId": "ws_test",
+            "toolName": "web_search_preview",
+            "type": "tool-result",
+          },
+          {
+            "id": "msg_test",
+            "providerMetadata": {
+              "openai": {
+                "itemId": "msg_test",
+              },
+            },
+            "type": "text-start",
+          },
+          {
+            "delta": "Based on the search results, here are the upcoming features.",
+            "id": "msg_test",
+            "type": "text-delta",
+          },
+          {
+            "id": "msg_test",
+            "type": "text-end",
+          },
+          {
+            "finishReason": "tool-calls",
+            "providerMetadata": {
+              "openai": {
+                "responseId": "resp_test",
+              },
+            },
+            "type": "finish",
+            "usage": {
+              "cachedInputTokens": 0,
+              "inputTokens": 50,
+              "outputTokens": 25,
+              "reasoningTokens": 0,
+              "totalTokens": 75,
             },
           },
         ]
@@ -3187,7 +3414,7 @@ describe('OpenAIResponsesLanguageModel', () => {
             "type": "tool-input-end",
           },
           {
-            "input": "",
+            "input": "{}",
             "providerExecuted": true,
             "toolCallId": "ws_67cf3390e9608190869b5d45698a7067",
             "toolName": "web_search_preview",
@@ -3197,7 +3424,6 @@ describe('OpenAIResponsesLanguageModel', () => {
             "providerExecuted": true,
             "result": {
               "status": "completed",
-              "type": "web_search_tool_result",
             },
             "toolCallId": "ws_67cf3390e9608190869b5d45698a7067",
             "toolName": "web_search_preview",
@@ -4482,7 +4708,7 @@ describe('OpenAIResponsesLanguageModel', () => {
         expect(result.content).toMatchInlineSnapshot(`
           [
             {
-              "input": "",
+              "input": "{}",
               "providerExecuted": true,
               "toolCallId": "ws_67cf2b3051e88190b006770db6fdb13d",
               "toolName": "web_search_preview",

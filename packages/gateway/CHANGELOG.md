@@ -1,5 +1,45 @@
 # @ai-sdk/gateway
 
+## 1.0.12
+
+### Patch Changes
+
+- 50e2029: feat (provider/gateway): add deepseek v3.1 thinking model id
+- b8478f0: feat (provider/gateway): add mistral medium model id
+
+## 1.0.11
+
+### Patch Changes
+
+- 926259f: feat(provider/gateway): Expose model type in model spec
+- c000f96: feat(provider/gateway): Add DeepSeek V3.1
+
+## 1.0.10
+
+### Patch Changes
+
+- Updated dependencies [0857788]
+  - @ai-sdk/provider-utils@3.0.5
+
+## 1.0.9
+
+### Patch Changes
+
+- 8b96f99: feat(provider/gateway): Add DeepSeek v3.1 Base
+
+## 1.0.8
+
+### Patch Changes
+
+- Updated dependencies [68751f9]
+  - @ai-sdk/provider-utils@3.0.4
+
+## 1.0.7
+
+### Patch Changes
+
+- 28a4006: feat (provider/gateway): add gemini-2.5-flash-lite model id
+
 ## 1.0.6
 
 ### Patch Changes

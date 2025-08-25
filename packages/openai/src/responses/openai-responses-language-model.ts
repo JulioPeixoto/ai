@@ -5,7 +5,6 @@ import {
   LanguageModelV2Content,
   LanguageModelV2FinishReason,
   LanguageModelV2StreamPart,
-  LanguageModelV2Text,
   LanguageModelV2Usage,
   SharedV2ProviderMetadata,
 } from '@ai-sdk/provider';
@@ -25,6 +24,29 @@ import { convertToOpenAIResponsesMessages } from './convert-to-openai-responses-
 import { mapOpenAIResponseFinishReason } from './map-openai-responses-finish-reason';
 import { prepareResponsesTools } from './openai-responses-prepare-tools';
 import { OpenAIResponsesModelId } from './openai-responses-settings';
+
+const webSearchCallItem = z.object({
+  type: z.literal('web_search_call'),
+  id: z.string(),
+  status: z.string(),
+  action: z
+    .discriminatedUnion('type', [
+      z.object({
+        type: z.literal('search'),
+        query: z.string().nullish(),
+      }),
+      z.object({
+        type: z.literal('open_page'),
+        url: z.string(),
+      }),
+      z.object({
+        type: z.literal('find'),
+        url: z.string(),
+        pattern: z.string(),
+      }),
+    ])
+    .nullish(),
+});
 
 /**
  * `top_logprobs` request body argument can be set to an integer between
@@ -62,6 +84,7 @@ export class OpenAIResponsesLanguageModel implements LanguageModelV2 {
 
   readonly supportedUrls: Record<string, RegExp[]> = {
     'image/*': [/^https?:\/\/.*$/],
+    'application/pdf': [/^https?:\/\/.*$/],
   };
 
   get provider(): string {
@@ -240,7 +263,7 @@ export class OpenAIResponsesLanguageModel implements LanguageModelV2 {
     // Validate flex processing support
     if (
       openaiOptions?.serviceTier === 'flex' &&
-      !supportsFlexProcessing(this.modelId)
+      !modelConfig.supportsFlexProcessing
     ) {
       warnings.push({
         type: 'unsupported-setting',
@@ -255,7 +278,7 @@ export class OpenAIResponsesLanguageModel implements LanguageModelV2 {
     // Validate priority processing support
     if (
       openaiOptions?.serviceTier === 'priority' &&
-      !supportsPriorityProcessing(this.modelId)
+      !modelConfig.supportsPriorityProcessing
     ) {
       warnings.push({
         type: 'unsupported-setting',
@@ -355,11 +378,7 @@ export class OpenAIResponsesLanguageModel implements LanguageModelV2 {
                 arguments: z.string(),
                 id: z.string(),
               }),
-              z.object({
-                type: z.literal('web_search_call'),
-                id: z.string(),
-                status: z.string().optional(),
-              }),
+              webSearchCallItem,
               z.object({
                 type: z.literal('computer_call'),
                 id: z.string(),
@@ -507,7 +526,7 @@ export class OpenAIResponsesLanguageModel implements LanguageModelV2 {
             type: 'tool-call',
             toolCallId: part.id,
             toolName: 'web_search_preview',
-            input: '',
+            input: JSON.stringify({ action: part.action }),
             providerExecuted: true,
           });
 
@@ -515,7 +534,7 @@ export class OpenAIResponsesLanguageModel implements LanguageModelV2 {
             type: 'tool-result',
             toolCallId: part.id,
             toolName: 'web_search_preview',
-            result: { status: part.status || 'completed' },
+            result: { status: part.status },
             providerExecuted: true,
           });
           break;
@@ -783,7 +802,7 @@ export class OpenAIResponsesLanguageModel implements LanguageModelV2 {
                   type: 'tool-call',
                   toolCallId: value.item.id,
                   toolName: 'web_search_preview',
-                  input: '',
+                  input: JSON.stringify({ action: value.item.action }),
                   providerExecuted: true,
                 });
 
@@ -791,10 +810,7 @@ export class OpenAIResponsesLanguageModel implements LanguageModelV2 {
                   type: 'tool-result',
                   toolCallId: value.item.id,
                   toolName: 'web_search_preview',
-                  result: {
-                    type: 'web_search_tool_result',
-                    status: value.item.status || 'completed',
-                  },
+                  result: { status: value.item.status },
                   providerExecuted: true,
                 });
               } else if (value.item.type === 'computer_call') {
@@ -902,7 +918,7 @@ export class OpenAIResponsesLanguageModel implements LanguageModelV2 {
                 delta: value.delta,
               });
 
-              if (value.logprobs) {
+              if (options.providerOptions?.openai?.logprobs && value.logprobs) {
                 logprobs.push(value.logprobs);
               }
             } else if (isResponseReasoningSummaryPartAddedChunk(value)) {
@@ -1069,6 +1085,12 @@ const responseOutputItemAddedSchema = z.object({
       type: z.literal('web_search_call'),
       id: z.string(),
       status: z.string(),
+      action: z
+        .object({
+          type: z.literal('search'),
+          query: z.string().optional(),
+        })
+        .nullish(),
     }),
     z.object({
       type: z.literal('computer_call'),
@@ -1117,11 +1139,7 @@ const responseOutputItemDoneSchema = z.object({
       arguments: z.string(),
       status: z.literal('completed'),
     }),
-    z.object({
-      type: z.literal('web_search_call'),
-      id: z.string(),
-      status: z.literal('completed'),
-    }),
+    webSearchCallItem,
     z.object({
       type: z.literal('computer_call'),
       id: z.string(),
@@ -1295,15 +1313,35 @@ type ResponsesModelConfig = {
   isReasoningModel: boolean;
   systemMessageMode: 'remove' | 'system' | 'developer';
   requiredAutoTruncation: boolean;
+  supportsFlexProcessing: boolean;
+  supportsPriorityProcessing: boolean;
 };
 
 function getResponsesModelConfig(modelId: string): ResponsesModelConfig {
+  const supportsFlexProcessing =
+    modelId.startsWith('o3') ||
+    modelId.startsWith('o4-mini') ||
+    (modelId.startsWith('gpt-5') && !modelId.startsWith('gpt-5-chat'));
+  const supportsPriorityProcessing =
+    modelId.startsWith('gpt-4') ||
+    modelId.startsWith('gpt-5-mini') ||
+    (modelId.startsWith('gpt-5') &&
+      !modelId.startsWith('gpt-5-nano') &&
+      !modelId.startsWith('gpt-5-chat')) ||
+    modelId.startsWith('o3') ||
+    modelId.startsWith('o4-mini');
+  const defaults = {
+    requiredAutoTruncation: false,
+    systemMessageMode: 'system' as const,
+    supportsFlexProcessing,
+    supportsPriorityProcessing,
+  };
+
   // gpt-5-chat models are non-reasoning
   if (modelId.startsWith('gpt-5-chat')) {
     return {
+      ...defaults,
       isReasoningModel: false,
-      systemMessageMode: 'system',
-      requiredAutoTruncation: false,
     };
   }
 
@@ -1316,45 +1354,24 @@ function getResponsesModelConfig(modelId: string): ResponsesModelConfig {
   ) {
     if (modelId.startsWith('o1-mini') || modelId.startsWith('o1-preview')) {
       return {
+        ...defaults,
         isReasoningModel: true,
         systemMessageMode: 'remove',
-        requiredAutoTruncation: false,
       };
     }
 
     return {
+      ...defaults,
       isReasoningModel: true,
       systemMessageMode: 'developer',
-      requiredAutoTruncation: false,
     };
   }
 
   // gpt models:
   return {
+    ...defaults,
     isReasoningModel: false,
-    systemMessageMode: 'system',
-    requiredAutoTruncation: false,
   };
-}
-
-function supportsFlexProcessing(modelId: string): boolean {
-  return (
-    modelId.startsWith('o3') ||
-    modelId.startsWith('o4-mini') ||
-    (modelId.startsWith('gpt-5') && !modelId.startsWith('gpt-5-chat'))
-  );
-}
-
-function supportsPriorityProcessing(modelId: string): boolean {
-  return (
-    modelId.startsWith('gpt-4') ||
-    modelId.startsWith('gpt-5-mini') ||
-    (modelId.startsWith('gpt-5') &&
-      !modelId.startsWith('gpt-5-nano') &&
-      !modelId.startsWith('gpt-5-chat')) ||
-    modelId.startsWith('o3') ||
-    modelId.startsWith('o4-mini')
-  );
 }
 
 // TODO AI SDK 6: use optional here instead of nullish

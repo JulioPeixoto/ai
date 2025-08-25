@@ -1,5 +1,52 @@
 # @ai-sdk/openai
 
+## 2.0.20
+
+### Patch Changes
+
+- 974de40: fix(provider/ai): do not set `.providerMetadata.openai.logprobs` to an array of empty arrays when using `streamText()`
+
+## 2.0.19
+
+### Patch Changes
+
+- Updated dependencies [0857788]
+  - @ai-sdk/provider-utils@3.0.5
+
+## 2.0.18
+
+### Patch Changes
+
+- 5e47d00: Support Responses API input_file file_url passthrough for PDFs.
+
+  This adds:
+
+  - file_url variant to OpenAIResponses user content
+  - PDF URL mapping to input_file with file_url in Responses converter
+  - PDF URL support in supportedUrls to avoid auto-download
+
+## 2.0.17
+
+### Patch Changes
+
+- 70bb696: fix(provider/openai): correct web search tool input
+
+## 2.0.16
+
+### Patch Changes
+
+- Updated dependencies [68751f9]
+  - @ai-sdk/provider-utils@3.0.4
+
+## 2.0.15
+
+### Patch Changes
+
+- a4bef93: feat(provider/openai): expose web search queries in responses api
+- 6ed34cb: refactor(openai): consolidate model config into `getResponsesModelConfig()`
+
+  https://github.com/vercel/ai/pull/8038
+
 ## 2.0.14
 
 ### Patch Changes
