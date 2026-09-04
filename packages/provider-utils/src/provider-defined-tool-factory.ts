@@ -1,26 +1,37 @@
-import { tool, Tool, ToolExecuteFunction } from './types/tool';
-import { FlexibleSchema } from './schema';
-
-export type ProviderDefinedToolFactory<INPUT, ARGS extends object> = <OUTPUT>(
+import { tool, type ProviderDefinedTool, type Tool } from './types/tool';
+import type { FlexibleSchema } from './schema';
+import type { Context } from './types/context';
+import type { ToolExecuteFunction } from './types/tool-execute-function';
+/**
+ * A provider-defined tool is a tool for which the provider defines the input
+ * and output schemas, but does not execute the tool.
+ */
+export type ProviderDefinedToolFactory<
+  INPUT,
+  ARGS extends object,
+  CONTEXT extends Context = {},
+> = <OUTPUT>(
   options: ARGS & {
-    execute?: ToolExecuteFunction<INPUT, OUTPUT>;
-    needsApproval?: Tool<INPUT, OUTPUT>['needsApproval'];
-    toModelOutput?: Tool<INPUT, OUTPUT>['toModelOutput'];
-    onInputStart?: Tool<INPUT, OUTPUT>['onInputStart'];
-    onInputDelta?: Tool<INPUT, OUTPUT>['onInputDelta'];
-    onInputAvailable?: Tool<INPUT, OUTPUT>['onInputAvailable'];
+    execute?: ToolExecuteFunction<INPUT, OUTPUT, CONTEXT>;
+    needsApproval?: Tool<INPUT, OUTPUT, CONTEXT>['needsApproval'];
+    toModelOutput?: Tool<INPUT, OUTPUT, CONTEXT>['toModelOutput'];
+    onInputStart?: Tool<INPUT, OUTPUT, CONTEXT>['onInputStart'];
+    onInputDelta?: Tool<INPUT, OUTPUT, CONTEXT>['onInputDelta'];
+    onInputAvailable?: Tool<INPUT, OUTPUT, CONTEXT>['onInputAvailable'];
   },
-) => Tool<INPUT, OUTPUT>;
+) => ProviderDefinedTool<INPUT, OUTPUT, CONTEXT>;
 
-export function createProviderDefinedToolFactory<INPUT, ARGS extends object>({
+export function createProviderDefinedToolFactory<
+  INPUT,
+  ARGS extends object,
+  CONTEXT extends Context = {},
+>({
   id,
-  name,
   inputSchema,
 }: {
   id: `${string}.${string}`;
-  name: string;
   inputSchema: FlexibleSchema<INPUT>;
-}): ProviderDefinedToolFactory<INPUT, ARGS> {
+}): ProviderDefinedToolFactory<INPUT, ARGS, CONTEXT> {
   return <OUTPUT>({
     execute,
     outputSchema,
@@ -31,18 +42,18 @@ export function createProviderDefinedToolFactory<INPUT, ARGS extends object>({
     onInputAvailable,
     ...args
   }: ARGS & {
-    execute?: ToolExecuteFunction<INPUT, OUTPUT>;
+    execute?: ToolExecuteFunction<INPUT, OUTPUT, CONTEXT>;
     outputSchema?: FlexibleSchema<OUTPUT>;
-    needsApproval?: Tool<INPUT, OUTPUT>['needsApproval'];
-    toModelOutput?: Tool<INPUT, OUTPUT>['toModelOutput'];
-    onInputStart?: Tool<INPUT, OUTPUT>['onInputStart'];
-    onInputDelta?: Tool<INPUT, OUTPUT>['onInputDelta'];
-    onInputAvailable?: Tool<INPUT, OUTPUT>['onInputAvailable'];
-  }): Tool<INPUT, OUTPUT> =>
+    needsApproval?: Tool<INPUT, OUTPUT, CONTEXT>['needsApproval'];
+    toModelOutput?: Tool<INPUT, OUTPUT, CONTEXT>['toModelOutput'];
+    onInputStart?: Tool<INPUT, OUTPUT, CONTEXT>['onInputStart'];
+    onInputDelta?: Tool<INPUT, OUTPUT, CONTEXT>['onInputDelta'];
+    onInputAvailable?: Tool<INPUT, OUTPUT, CONTEXT>['onInputAvailable'];
+  }): ProviderDefinedTool<INPUT, OUTPUT, CONTEXT> =>
     tool({
-      type: 'provider-defined',
+      type: 'provider',
+      isProviderExecuted: false,
       id,
-      name,
       args,
       inputSchema,
       outputSchema,
@@ -52,39 +63,39 @@ export function createProviderDefinedToolFactory<INPUT, ARGS extends object>({
       onInputStart,
       onInputDelta,
       onInputAvailable,
-    });
+    }) as ProviderDefinedTool<INPUT, OUTPUT, CONTEXT>;
 }
 
 export type ProviderDefinedToolFactoryWithOutputSchema<
   INPUT,
   OUTPUT,
   ARGS extends object,
+  CONTEXT extends Context = {},
 > = (
   options: ARGS & {
-    execute?: ToolExecuteFunction<INPUT, OUTPUT>;
-    needsApproval?: Tool<INPUT, OUTPUT>['needsApproval'];
-    toModelOutput?: Tool<INPUT, OUTPUT>['toModelOutput'];
-    onInputStart?: Tool<INPUT, OUTPUT>['onInputStart'];
-    onInputDelta?: Tool<INPUT, OUTPUT>['onInputDelta'];
-    onInputAvailable?: Tool<INPUT, OUTPUT>['onInputAvailable'];
+    execute?: ToolExecuteFunction<INPUT, OUTPUT, CONTEXT>;
+    needsApproval?: Tool<INPUT, OUTPUT, CONTEXT>['needsApproval'];
+    toModelOutput?: Tool<INPUT, OUTPUT, CONTEXT>['toModelOutput'];
+    onInputStart?: Tool<INPUT, OUTPUT, CONTEXT>['onInputStart'];
+    onInputDelta?: Tool<INPUT, OUTPUT, CONTEXT>['onInputDelta'];
+    onInputAvailable?: Tool<INPUT, OUTPUT, CONTEXT>['onInputAvailable'];
   },
-) => Tool<INPUT, OUTPUT>;
+) => ProviderDefinedTool<INPUT, OUTPUT, CONTEXT>;
 
 export function createProviderDefinedToolFactoryWithOutputSchema<
   INPUT,
   OUTPUT,
   ARGS extends object,
+  CONTEXT extends Context = {},
 >({
   id,
-  name,
   inputSchema,
   outputSchema,
 }: {
   id: `${string}.${string}`;
-  name: string;
   inputSchema: FlexibleSchema<INPUT>;
   outputSchema: FlexibleSchema<OUTPUT>;
-}): ProviderDefinedToolFactoryWithOutputSchema<INPUT, OUTPUT, ARGS> {
+}): ProviderDefinedToolFactoryWithOutputSchema<INPUT, OUTPUT, ARGS, CONTEXT> {
   return ({
     execute,
     needsApproval,
@@ -94,17 +105,17 @@ export function createProviderDefinedToolFactoryWithOutputSchema<
     onInputAvailable,
     ...args
   }: ARGS & {
-    execute?: ToolExecuteFunction<INPUT, OUTPUT>;
-    needsApproval?: Tool<INPUT, OUTPUT>['needsApproval'];
-    toModelOutput?: Tool<INPUT, OUTPUT>['toModelOutput'];
-    onInputStart?: Tool<INPUT, OUTPUT>['onInputStart'];
-    onInputDelta?: Tool<INPUT, OUTPUT>['onInputDelta'];
-    onInputAvailable?: Tool<INPUT, OUTPUT>['onInputAvailable'];
-  }): Tool<INPUT, OUTPUT> =>
+    execute?: ToolExecuteFunction<INPUT, OUTPUT, CONTEXT>;
+    needsApproval?: Tool<INPUT, OUTPUT, CONTEXT>['needsApproval'];
+    toModelOutput?: Tool<INPUT, OUTPUT, CONTEXT>['toModelOutput'];
+    onInputStart?: Tool<INPUT, OUTPUT, CONTEXT>['onInputStart'];
+    onInputDelta?: Tool<INPUT, OUTPUT, CONTEXT>['onInputDelta'];
+    onInputAvailable?: Tool<INPUT, OUTPUT, CONTEXT>['onInputAvailable'];
+  }): ProviderDefinedTool<INPUT, OUTPUT, CONTEXT> =>
     tool({
-      type: 'provider-defined',
+      type: 'provider',
+      isProviderExecuted: false,
       id,
-      name,
       args,
       inputSchema,
       outputSchema,
@@ -114,5 +125,5 @@ export function createProviderDefinedToolFactoryWithOutputSchema<
       onInputStart,
       onInputDelta,
       onInputAvailable,
-    });
+    }) as ProviderDefinedTool<INPUT, OUTPUT, CONTEXT>;
 }

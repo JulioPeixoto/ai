@@ -1,11 +1,11 @@
 import { openai } from '@ai-sdk/openai';
-import { generateText, stepCountIs } from 'ai';
-import { experimental_createMCPClient } from '@ai-sdk/mcp';
+import { generateText, isStepCount } from 'ai';
+import { createMCPClient } from '@ai-sdk/mcp';
 
 import 'dotenv/config';
 
 async function main() {
-  const mcpClient = await experimental_createMCPClient({
+  const mcpClient = await createMCPClient({
     transport: {
       type: 'sse',
       url: 'http://localhost:8080/sse',
@@ -20,11 +20,11 @@ async function main() {
   const { text: answer } = await generateText({
     model: openai('gpt-4o-mini'),
     tools,
-    stopWhen: stepCountIs(10),
+    stopWhen: isStepCount(10),
     onStepFinish: async ({ toolResults }) => {
       console.log(`STEP RESULTS: ${JSON.stringify(toolResults, null, 2)}`);
     },
-    system: 'You are a helpful chatbot',
+    instructions: 'You are a helpful chatbot',
     prompt: 'List all products, then find availability for Product 1.',
   });
 

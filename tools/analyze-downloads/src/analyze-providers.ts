@@ -24,6 +24,7 @@ async function main() {
     '@ai-sdk/groq',
     '@ai-sdk/huggingface',
     '@ai-sdk/hume',
+    '@ai-sdk/klingai',
     '@ai-sdk/lmnt',
     '@ai-sdk/luma',
     '@ai-sdk/mistral',
@@ -33,7 +34,6 @@ async function main() {
     '@ai-sdk/replicate',
     '@ai-sdk/revai',
     '@ai-sdk/togetherai',
-    '@ai-sdk/vercel',
     '@ai-sdk/xai',
 
     'ollama-ai-provider',
@@ -155,7 +155,7 @@ function fetchWithRetry(
               );
             }
           } else {
-            resolve(response);
+            setTimeout(() => resolve(response), 1000);
           }
         })
         .catch(err => {

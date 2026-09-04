@@ -1,4 +1,7 @@
-import { JSONSchema7 } from '@ai-sdk/provider';
+import {
+  UnsupportedFunctionalityError,
+  type JSONSchema7,
+} from '@ai-sdk/provider';
 import { convertJSONSchemaToOpenAPISchema } from './convert-json-schema-to-openapi-schema';
 import { it, expect } from 'vitest';
 
@@ -22,6 +25,162 @@ it('should remove additionalProperties and $schema', () => {
   };
 
   expect(convertJSONSchemaToOpenAPISchema(input)).toEqual(expected);
+});
+
+it('should preserve array length constraints', () => {
+  const input: JSONSchema7 = {
+    type: 'object',
+    properties: {
+      elements: {
+        type: 'array',
+        items: { type: 'string' },
+        minItems: 2,
+        maxItems: 4,
+      },
+    },
+  };
+
+  expect(convertJSONSchemaToOpenAPISchema(input)).toEqual({
+    type: 'object',
+    properties: {
+      elements: {
+        type: 'array',
+        items: { type: 'string' },
+        minItems: 2,
+        maxItems: 4,
+      },
+    },
+  });
+});
+
+it('should inline direct references to root-level $defs', () => {
+  const input = {
+    type: 'object',
+    properties: {
+      locale: {
+        $ref: '#/$defs/Locale',
+        description: 'Locale for formatting',
+      },
+    },
+    required: ['locale'],
+    $defs: {
+      Locale: { type: 'string', enum: ['de', 'en'] },
+    },
+  } as JSONSchema7 & { $defs: Record<string, JSONSchema7> };
+
+  expect(convertJSONSchemaToOpenAPISchema(input)).toEqual({
+    type: 'object',
+    properties: {
+      locale: {
+        type: 'string',
+        enum: ['de', 'en'],
+        description: 'Locale for formatting',
+      },
+    },
+    required: ['locale'],
+  });
+});
+
+it('should inline a root reference before checking for an empty object', () => {
+  const input = {
+    type: 'object',
+    $ref: '#/$defs/Parameters',
+    $defs: {
+      Parameters: {
+        type: 'object',
+        properties: { value: { type: 'string' } },
+      },
+    },
+  } as JSONSchema7 & { $defs: Record<string, JSONSchema7> };
+
+  expect(convertJSONSchemaToOpenAPISchema(input)).toEqual({
+    type: 'object',
+    properties: { value: { type: 'string' } },
+  });
+});
+
+it('should inline nested references between root-level definitions', () => {
+  const input = {
+    type: 'object',
+    properties: {
+      settings: { $ref: '#/$defs/Settings' },
+    },
+    $defs: {
+      Locale: { type: 'string', enum: ['de', 'en'] },
+      Settings: {
+        type: 'object',
+        properties: {
+          locale: { $ref: '#/$defs/Locale' },
+        },
+        required: ['locale'],
+      },
+    },
+  } as JSONSchema7 & { $defs: Record<string, JSONSchema7> };
+
+  expect(convertJSONSchemaToOpenAPISchema(input)).toEqual({
+    type: 'object',
+    properties: {
+      settings: {
+        type: 'object',
+        properties: {
+          locale: { type: 'string', enum: ['de', 'en'] },
+        },
+        required: ['locale'],
+      },
+    },
+  });
+});
+
+it('should inline references to legacy root-level definitions', () => {
+  const input: JSONSchema7 = {
+    type: 'object',
+    properties: {
+      locale: { $ref: '#/definitions/Locale' },
+    },
+    definitions: {
+      Locale: { type: 'string', enum: ['de', 'en'] },
+    },
+  };
+
+  expect(convertJSONSchemaToOpenAPISchema(input)).toEqual({
+    type: 'object',
+    properties: {
+      locale: { type: 'string', enum: ['de', 'en'] },
+    },
+  });
+});
+
+it('should reject unsupported or missing references', () => {
+  expect(() =>
+    convertJSONSchemaToOpenAPISchema({ $ref: '#/properties/value' }),
+  ).toThrow(UnsupportedFunctionalityError);
+
+  expect(() =>
+    convertJSONSchemaToOpenAPISchema({
+      $ref: '#/$defs/Missing',
+    } as JSONSchema7),
+  ).toThrow(UnsupportedFunctionalityError);
+});
+
+it('should reject recursive references', () => {
+  const input = {
+    type: 'object',
+    properties: {
+      node: { $ref: '#/$defs/Node' },
+    },
+    $defs: {
+      Node: {
+        type: 'object',
+        properties: {
+          child: { $ref: '#/$defs/Node' },
+        },
+      },
+    },
+  } as JSONSchema7 & { $defs: Record<string, JSONSchema7> };
+
+  expect(() => convertJSONSchemaToOpenAPISchema(input)).toThrow(
+    UnsupportedFunctionalityError,
+  );
 });
 
 it('should remove additionalProperties object from nested object schemas', function () {
@@ -100,7 +259,7 @@ it('should convert "const" to "enum" with a single value', () => {
   const expected = {
     type: 'object',
     properties: {
-      status: { enum: ['active'] },
+      status: { type: 'string', enum: ['active'] },
     },
   };
 
@@ -214,6 +373,7 @@ it('should convert deeply nested "const" to "enum"', () => {
                 type: 'object',
                 properties: {
                   value: {
+                    type: 'string',
                     enum: ['specific value'],
                   },
                 },
@@ -437,7 +597,7 @@ it('should handle null type correctly', () => {
     type: 'object',
     properties: {
       nullableField: {
-        type: 'string',
+        anyOf: [{ type: 'string' }],
         nullable: true,
       },
       explicitNullField: {
@@ -495,7 +655,7 @@ it('should handle descriptions', () => {
   expect(convertJSONSchemaToOpenAPISchema(input)).toEqual(expected);
 });
 
-it('should return undefined for empty object schemas', () => {
+it('should return undefined for empty object schemas at root level', () => {
   const emptyObjectSchemas = [
     { type: 'object' },
     { type: 'object', properties: {} },
@@ -504,6 +664,62 @@ it('should return undefined for empty object schemas', () => {
   emptyObjectSchemas.forEach(schema => {
     expect(convertJSONSchemaToOpenAPISchema(schema)).toBeUndefined();
   });
+});
+
+it('should preserve nested empty object schemas to avoid breaking required array validation', () => {
+  const input: JSONSchema7 = {
+    type: 'object',
+    properties: {
+      url: { type: 'string', description: 'URL to navigate to' },
+      launchOptions: {
+        type: 'object',
+        description: 'PuppeteerJS LaunchOptions',
+      },
+      allowDangerous: {
+        type: 'boolean',
+        description: 'Allow dangerous options',
+      },
+    },
+    required: ['url', 'launchOptions'],
+  };
+
+  const expected = {
+    type: 'object',
+    properties: {
+      url: { type: 'string', description: 'URL to navigate to' },
+      launchOptions: {
+        type: 'object',
+        description: 'PuppeteerJS LaunchOptions',
+      },
+      allowDangerous: {
+        type: 'boolean',
+        description: 'Allow dangerous options',
+      },
+    },
+    required: ['url', 'launchOptions'],
+  };
+
+  expect(convertJSONSchemaToOpenAPISchema(input)).toEqual(expected);
+});
+
+it('should preserve nested empty object schemas without descriptions', () => {
+  const input: JSONSchema7 = {
+    type: 'object',
+    properties: {
+      options: { type: 'object' },
+    },
+    required: ['options'],
+  };
+
+  const expected = {
+    type: 'object',
+    properties: {
+      options: { type: 'object' },
+    },
+    required: ['options'],
+  };
+
+  expect(convertJSONSchemaToOpenAPISchema(input)).toEqual(expected);
 });
 
 it('should handle non-empty object schemas', () => {
@@ -548,6 +764,102 @@ it('should convert string enum properties', () => {
   });
 });
 
+it('should infer the type of an untyped string enum', () => {
+  expect(
+    convertJSONSchemaToOpenAPISchema({ enum: ['text', 'code', 'image'] }),
+  ).toEqual({
+    type: 'string',
+    enum: ['text', 'code', 'image'],
+  });
+});
+
+it('should convert non-string enum values to the Google enum format', () => {
+  const input: JSONSchema7 = {
+    type: 'object',
+    properties: {
+      numberValue: { type: 'number', const: 15 },
+      integerValue: { type: 'integer', enum: [1, 2] },
+      booleanValue: { type: 'boolean', const: true },
+      nullValue: { const: null },
+    },
+  };
+
+  expect(convertJSONSchemaToOpenAPISchema(input)).toEqual({
+    type: 'object',
+    properties: {
+      numberValue: { type: 'number', format: 'enum', enum: ['15'] },
+      integerValue: {
+        type: 'integer',
+        format: 'enum',
+        enum: ['1', '2'],
+      },
+      booleanValue: { type: 'boolean', format: 'enum', enum: ['true'] },
+      nullValue: { type: 'null' },
+    },
+  });
+});
+
+it('should convert nullable type-array and untyped primitive enums', () => {
+  const input: JSONSchema7 = {
+    type: 'object',
+    properties: {
+      nullableString: {
+        type: ['string', 'null'],
+        enum: ['a', 'b'],
+      },
+      nullableNumber: {
+        type: ['number', 'null'],
+        enum: [1, 2],
+      },
+      nullableBoolean: {
+        type: ['boolean', 'null'],
+        enum: [true, null],
+      },
+      untypedNumber: { enum: [1, 2] },
+      untypedBoolean: { enum: [true, false] },
+    },
+  };
+
+  expect(convertJSONSchemaToOpenAPISchema(input)).toEqual({
+    type: 'object',
+    properties: {
+      nullableString: {
+        type: 'string',
+        nullable: true,
+        enum: ['a', 'b'],
+      },
+      nullableNumber: {
+        type: 'number',
+        nullable: true,
+        format: 'enum',
+        enum: ['1', '2'],
+      },
+      nullableBoolean: {
+        type: 'boolean',
+        nullable: true,
+        format: 'enum',
+        enum: ['true'],
+      },
+      untypedNumber: {
+        type: 'number',
+        format: 'enum',
+        enum: ['1', '2'],
+      },
+      untypedBoolean: {
+        type: 'boolean',
+        format: 'enum',
+        enum: ['true', 'false'],
+      },
+    },
+  });
+});
+
+it('should reject enum values with mixed types', () => {
+  expect(() => convertJSONSchemaToOpenAPISchema({ enum: ['text', 1] })).toThrow(
+    UnsupportedFunctionalityError,
+  );
+});
+
 it('should convert nullable string enum', () => {
   const schemaWithEnumProperty: JSONSchema7 = {
     type: 'object',
@@ -580,4 +892,49 @@ it('should convert nullable string enum', () => {
       },
     },
   });
+});
+
+it('should handle type arrays with multiple non-null types plus null', () => {
+  const input: JSONSchema7 = {
+    type: 'object',
+    properties: {
+      multiTypeField: {
+        type: ['string', 'number', 'null'],
+      },
+    },
+  };
+
+  const expected = {
+    type: 'object',
+    properties: {
+      multiTypeField: {
+        anyOf: [{ type: 'string' }, { type: 'number' }],
+        nullable: true,
+      },
+    },
+  };
+
+  expect(convertJSONSchemaToOpenAPISchema(input)).toEqual(expected);
+});
+
+it('should convert type arrays without null to anyOf', () => {
+  const input: JSONSchema7 = {
+    type: 'object',
+    properties: {
+      multiTypeField: {
+        type: ['string', 'number'],
+      },
+    },
+  };
+
+  const expected = {
+    type: 'object',
+    properties: {
+      multiTypeField: {
+        anyOf: [{ type: 'string' }, { type: 'number' }],
+      },
+    },
+  };
+
+  expect(convertJSONSchemaToOpenAPISchema(input)).toEqual(expected);
 });

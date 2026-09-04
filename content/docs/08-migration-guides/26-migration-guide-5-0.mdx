@@ -1,9 +1,9 @@
 ---
-title: Migrate AI SDK 4.0 to 5.0
-description: Learn how to upgrade AI SDK 4.0 to 5.0.
+title: Migrate AI SDK 4.x to 5.0
+description: Learn how to upgrade AI SDK 4.x to 5.0.
 ---
 
-# Migrate AI SDK 4.0 to 5.0
+# Migrate AI SDK 4.x to 5.0
 
 ## Recommended Migration Process
 
@@ -124,7 +124,7 @@ The `maxTokens` parameter has been renamed to `maxOutputTokens` for clarity.
 
 ```tsx filename="AI SDK 4.0"
 const result = await generateText({
-  model: openai('gpt-4.1'),
+  model: __MODEL__,
   maxTokens: 1024,
   prompt: 'Hello, world!',
 });
@@ -132,7 +132,7 @@ const result = await generateText({
 
 ```tsx filename="AI SDK 5.0"
 const result = await generateText({
-  model: openai('gpt-4.1'),
+  model: __MODEL__,
   maxOutputTokens: 1024,
   prompt: 'Hello, world!',
 });
@@ -166,20 +166,18 @@ import { UIMessage, CreateUIMessage } from 'ai';
 
 ```tsx filename="AI SDK 4.0"
 import { convertToCoreMessages, streamText } from 'ai';
-import { openai } from '@ai-sdk/openai';
 
 const result = await streamText({
-  model: openai('gpt-4'),
+  model: __MODEL__,
   messages: convertToCoreMessages(messages),
 });
 ```
 
 ```tsx filename="AI SDK 5.0"
 import { convertToModelMessages, streamText } from 'ai';
-import { openai } from '@ai-sdk/openai';
 
 const result = await streamText({
-  model: openai('gpt-4'),
+  model: __MODEL__,
   messages: convertToModelMessages(messages),
 });
 ```
@@ -373,7 +371,7 @@ const stream = createUIMessageStream({
 
     // Can merge with LLM streams
     const result = streamText({
-      model: openai('gpt-4.1'),
+      model: __MODEL__,
       messages,
     });
 
@@ -389,7 +387,6 @@ return createUIMessageStreamResponse({ stream });
 The `writeMessageAnnotation` and `writeData` methods from `DataStreamWriter` have been removed. Instead, use custom data parts with the new `UIMessage` stream architecture.
 
 ```tsx filename="AI SDK 4.0"
-import { openai } from '@ai-sdk/openai';
 import { createDataStreamResponse, streamText } from 'ai';
 
 export async function POST(req: Request) {
@@ -401,7 +398,7 @@ export async function POST(req: Request) {
       dataStream.writeData('call started');
 
       const result = streamText({
-        model: openai('gpt-4o'),
+        model: __MODEL__,
         messages,
         onChunk() {
           // Write message annotations
@@ -428,7 +425,6 @@ export async function POST(req: Request) {
 ```
 
 ```tsx filename="AI SDK 5.0"
-import { openai } from '@ai-sdk/openai';
 import {
   createUIMessageStream,
   createUIMessageStreamResponse,
@@ -451,7 +447,7 @@ export async function POST(req: Request) {
       });
 
       const result = streamText({
-        model: openai('gpt-4o'),
+        model: __MODEL__,
         messages,
         onChunk() {
           // Write data parts that update during streaming
@@ -495,7 +491,7 @@ The `providerMetadata` input parameter has been renamed to `providerOptions`. No
 
 ```tsx filename="AI SDK 4.0"
 const result = await generateText({
-  model: openai('gpt-4'),
+  model: 'openai/gpt-5',
   prompt: 'Hello',
   providerMetadata: {
     openai: { store: false },
@@ -505,7 +501,7 @@ const result = await generateText({
 
 ```tsx filename="AI SDK 5.0"
 const result = await generateText({
-  model: openai('gpt-4'),
+  model: 'openai/gpt-5',
   prompt: 'Hello',
   providerOptions: {
     // Input parameter renamed
@@ -658,7 +654,7 @@ The `toolCallStreaming` option has been removed in AI SDK 5.0. Tool call streami
 
 ```tsx filename="AI SDK 4.0"
 const result = streamText({
-  model: openai('gpt-4o'),
+  model: __MODEL__,
   messages,
   toolCallStreaming: true, // Optional parameter to enable streaming
   tools: {
@@ -670,7 +666,7 @@ const result = streamText({
 
 ```tsx filename="AI SDK 5.0"
 const result = streamText({
-  model: openai('gpt-4o'),
+  model: __MODEL__,
   messages: convertToModelMessages(messages),
   // toolCallStreaming removed - streaming is always enabled
   tools: {
@@ -754,7 +750,7 @@ When using both static and dynamic tools together, use the `dynamic` flag for ty
 
 ```tsx filename="AI SDK 5.0"
 const result = await generateText({
-  model: openai('gpt-4'),
+  model: __MODEL__,
   tools: {
     // Static tool with known types
     weather: weatherTool,
@@ -1156,7 +1152,7 @@ For core functions like `generateText` and `streamText`, the `maxSteps` paramete
 ```tsx filename="AI SDK 4.0"
 // V4: Simple numeric limit
 const result = await generateText({
-  model: openai('gpt-4'),
+  model: __MODEL__,
   messages,
   maxSteps: 5, // Stop after a maximum of 5 steps
 });
@@ -1168,19 +1164,19 @@ const { messages } = useChat({
 ```
 
 ```tsx filename="AI SDK 5.0"
-import { stepCountIs, hasToolCall } from 'ai';
+import { isStepCount, hasToolCall } from 'ai';
 
 // V5: Server-side - flexible stopping conditions with stopWhen
 const result = await generateText({
-  model: openai('gpt-4'),
+  model: __MODEL__,
   messages,
   // Only triggers when last step has tool results
-  stopWhen: stepCountIs(5), // Stop at step 5 if tools were called
+  stopWhen: isStepCount(5), // Stop at step 5 if tools were called
 });
 
-// Server-side - stop when specific tool is called
+// Server-side - stop when a specific tool is called
 const result = await generateText({
-  model: openai('gpt-4'),
+  model: __MODEL__,
   messages,
   stopWhen: hasToolCall('finalizeTask'), // Stop when finalizeTask tool is called
 });
@@ -1191,14 +1187,17 @@ const result = await generateText({
 ```tsx filename="AI SDK 5.0"
 // Stop after N steps (equivalent to old maxSteps)
 // Note: Only applies when the last step has tool results
-stopWhen: stepCountIs(5);
+stopWhen: isStepCount(5);
 
-// Stop when specific tool is called
+// Stop when a specific tool is called
 stopWhen: hasToolCall('finalizeTask');
+
+// Stop when either tool is called
+stopWhen: hasToolCall('submitOrder', 'finalizeTask');
 
 // Multiple conditions (stops if ANY condition is met)
 stopWhen: [
-  stepCountIs(10), // Maximum 10 steps
+  isStepCount(10), // Maximum 10 steps
   hasToolCall('submitOrder'), // Or when order is submitted
 ];
 
@@ -1278,13 +1277,13 @@ const { messages, sendMessage } = useChat({
 
 ```tsx filename="AI SDK 5.0"
 // Server-side: Use stopWhen for multi-step control
-import { streamText, convertToModelMessages, stepCountIs } from 'ai';
-import { openai } from '@ai-sdk/openai';
+import { streamText, convertToModelMessages, isStepCount } from 'ai';
+__PROVIDER_IMPORT__;
 
 const result = await streamText({
-  model: openai('gpt-4'),
+  model: __MODEL__,
   messages: convertToModelMessages(messages),
-  stopWhen: stepCountIs(5), // Stop after 5 steps with tool calls
+  stopWhen: isStepCount(5), // Stop after 5 steps with tool calls
 });
 
 // Client-side: Configure automatic submission
@@ -1390,7 +1389,7 @@ const { messages } = useChat({
 });
 ```
 
-For a complete example of sharing chat state across components, see the [Share Chat State Across Components](/docs/cookbook/use-shared-chat-context) recipe.
+For a complete example of sharing chat state across components, see the [Share Chat State Across Components](/cookbook/next/use-shared-chat-context) recipe.
 
 #### Chat Transport Architecture
 
@@ -1787,13 +1786,13 @@ const { messages } = useChat({
 ```
 
 ```tsx filename="AI SDK 5.0"
-import { openai } from '@ai-sdk/openai';
 import {
   convertToModelMessages,
   streamText,
   UIMessage,
   type LanguageModelUsage,
 } from 'ai';
+__PROVIDER_IMPORT__;
 
 // Create a new metadata type (optional for type-safety)
 type MyMetadata = {
@@ -1807,7 +1806,7 @@ export async function POST(req: Request) {
   const { messages }: { messages: MyUIMessage[] } = await req.json();
 
   const result = streamText({
-    model: openai('gpt-4o'),
+    model: __MODEL__,
     messages: convertToModelMessages(messages),
   });
 
@@ -2073,11 +2072,48 @@ import { useAssistant } from '@ai-sdk/react';
 ```
 
 ```tsx filename="AI SDK 5.0"
-// useAssistant has been removed
-// Use useChat with appropriate configuration instead
+import { useChat } from '@ai-sdk/react';
+import { DefaultChatTransport } from 'ai';
+
+function Chat() {
+  const { messages, sendMessage } = useChat({
+    transport: new DefaultChatTransport({
+      api: '/api/chat',
+    }),
+  });
+
+  // ...
+}
 ```
 
-For an implementation of the assistant functionality with AI SDK v5, see this [example repository](https://github.com/vercel-labs/ai-sdk-openai-assistants-api).
+The `useAssistant` hook was specific to the OpenAI Assistants API. OpenAI has
+deprecated that API in favor of the Responses API. Configure `useChat` for your
+route as shown above, then return a UI message stream from the route:
+
+```tsx filename="app/api/chat/route.ts"
+import { openai } from '@ai-sdk/openai';
+import { convertToModelMessages, streamText, type UIMessage } from 'ai';
+
+export async function POST(req: Request) {
+  const { messages }: { messages: UIMessage[] } = await req.json();
+
+  const result = streamText({
+    model: openai.responses('gpt-4o-mini'),
+    prompt: convertToModelMessages(messages),
+  });
+
+  return result.toUIMessageStreamResponse();
+}
+```
+
+For persistent conversation state and built-in tools, see the
+[OpenAI Responses API guide](/cookbook/guides/openai-responses).
+
+If you need to connect `useChat` to another backend, see the
+[transport documentation](/docs/ai-sdk-ui/transport) and
+[stream protocol](/docs/ai-sdk-ui/stream-protocol). For migrating existing
+OpenAI Assistants data and API calls, see OpenAI's
+[Assistants migration guide](https://platform.openai.com/docs/assistants/migration).
 
 #### Attachments → File Parts
 
@@ -2186,7 +2222,7 @@ const { response } = await embed(/* */);
 ```tsx filename="AI SDK 5.0"
 const { embeddings, usage } = await embedMany({
   maxParallelCalls: 2, // Limit parallel requests
-  model: openai.textEmbeddingModel('text-embedding-3-small'),
+  model: 'openai/text-embedding-3-small',
   values: [
     'sunny day at the beach',
     'rainy afternoon in the city',
@@ -2354,7 +2390,7 @@ The `onChunk` callback now receives the new streaming chunk types with IDs and t
 
 ```tsx filename="AI SDK 4.0"
 const result = streamText({
-  model: openai('gpt-4.1'),
+  model: __MODEL__,
   prompt: 'Write a story',
   onChunk({ chunk }) {
     switch (chunk.type) {
@@ -2370,7 +2406,7 @@ const result = streamText({
 
 ```tsx filename="AI SDK 5.0"
 const result = streamText({
-  model: openai('gpt-4.1'),
+  model: __MODEL__,
   prompt: 'Write a story',
   onChunk({ chunk }) {
     switch (chunk.type) {
@@ -2555,7 +2591,7 @@ The streaming API has been completely restructured from data streams to UI messa
 // Express/Node.js servers
 app.post('/stream', async (req, res) => {
   const result = streamText({
-    model: openai('gpt-4.1'),
+    model: __MODEL__,
     prompt: 'Generate content',
   });
 
@@ -2564,7 +2600,7 @@ app.post('/stream', async (req, res) => {
 
 // Next.js API routes
 const result = streamText({
-  model: openai('gpt-4.1'),
+  model: __MODEL__,
   prompt: 'Generate content',
 });
 
@@ -2575,7 +2611,7 @@ return result.toDataStreamResponse();
 // Express/Node.js servers
 app.post('/stream', async (req, res) => {
   const result = streamText({
-    model: openai('gpt-4.1'),
+    model: __MODEL__,
     prompt: 'Generate content',
   });
 
@@ -2584,7 +2620,7 @@ app.post('/stream', async (req, res) => {
 
 // Next.js API routes
 const result = streamText({
-  model: openai('gpt-4.1'),
+  model: __MODEL__,
   prompt: 'Generate content',
 });
 
@@ -2796,7 +2832,7 @@ type LanguageModelV3StreamPart =
     }
 
   // Stream lifecycle events
-  | { type: 'stream-start'; warnings: Array<LanguageModelV3CallWarning> }
+  | { type: 'stream-start'; warnings: Array<SharedV3Warning> }
   | {
       type: 'finish';
       usage: LanguageModelV3Usage;
@@ -2841,7 +2877,7 @@ import { wrapLanguageModel } from 'ai';
 
 ```tsx filename="AI SDK 4.0"
 const result = await generateText({
-  model: openai('gpt-4'),
+  model: __MODEL__,
   messages,
   tools: { weatherTool, locationTool },
   experimental_activeTools: ['weatherTool'],
@@ -2850,7 +2886,7 @@ const result = await generateText({
 
 ```tsx filename="AI SDK 5.0"
 const result = await generateText({
-  model: openai('gpt-4'),
+  model: __MODEL__,
   messages,
   tools: { weatherTool, locationTool },
   activeTools: ['weatherTool'], // No longer experimental
@@ -2863,7 +2899,7 @@ The `experimental_prepareStep` option has been promoted and no longer requires t
 
 ```tsx filename="AI SDK 4.0"
 const result = await generateText({
-  model: openai('gpt-4'),
+  model: __MODEL__,
   messages,
   tools: { weatherTool, locationTool },
   experimental_prepareStep: ({ steps, stepNumber, model }) => {
@@ -2878,7 +2914,7 @@ const result = await generateText({
 
 ```tsx filename="AI SDK 5.0"
 const result = await generateText({
-  model: openai('gpt-4'),
+  model: __MODEL__,
   messages,
   tools: { weatherTool, locationTool },
   prepareStep: ({ steps, stepNumber, model }) => {
@@ -2906,7 +2942,7 @@ Temperature is no longer set to `0` by default.
 
 ```tsx filename="AI SDK 4.0"
 await generateText({
-  model: openai('gpt-4'),
+  model: __MODEL__,
   prompt: 'Write a creative story',
   // Implicitly temperature: 0
 });
@@ -2914,7 +2950,7 @@ await generateText({
 
 ```tsx filename="AI SDK 5.0"
 await generateText({
-  model: openai('gpt-4'),
+  model: __MODEL__,
   prompt: 'Write a creative story',
   temperature: 0, // Must explicitly set
 });
@@ -2937,7 +2973,6 @@ import {
   appendClientMessage,
   appendResponseMessages,
 } from 'ai';
-import { openai } from '@ai-sdk/openai';
 
 const updatedMessages = appendClientMessage({
   messages,
@@ -2945,7 +2980,7 @@ const updatedMessages = appendClientMessage({
 });
 
 const result = streamText({
-  model: openai('gpt-4o'),
+  model: __MODEL__,
   messages: updatedMessages,
   experimental_generateMessageId: () => generateId(), // ID generation on streamText
   onFinish: async ({ responseMessages, usage }) => {
@@ -2965,14 +3000,13 @@ In v5, message persistence is now handled through the `toUIMessageStreamResponse
 
 ```tsx filename="AI SDK 5.0"
 import { streamText, convertToModelMessages, UIMessage } from 'ai';
-import { openai } from '@ai-sdk/openai';
 
 const messages: UIMessage[] = [
   // Your existing messages in UIMessage format
 ];
 
 const result = streamText({
-  model: openai('gpt-4o'),
+  model: __MODEL__,
   messages: convertToModelMessages(messages),
   // experimental_generateMessageId removed from here
 });
@@ -3004,7 +3038,7 @@ The `experimental_generateMessageId` option has been moved from `streamText` con
 
 ```tsx filename="AI SDK 4.0"
 const result = streamText({
-  model: openai('gpt-4o'),
+  model: __MODEL__,
   messages,
   experimental_generateMessageId: () => generateId(),
 });
@@ -3012,7 +3046,7 @@ const result = streamText({
 
 ```tsx filename="AI SDK 5.0"
 const result = streamText({
-  model: openai('gpt-4o'),
+  model: __MODEL__,
   messages: convertToModelMessages(messages),
 });
 
@@ -3036,7 +3070,6 @@ import {
   convertToModelMessages,
   UIMessage,
 } from 'ai';
-import { openai } from '@ai-sdk/openai';
 
 const stream = createUIMessageStream({
   originalMessages: messages,
@@ -3050,7 +3083,7 @@ const stream = createUIMessageStream({
 
     // Stream the AI response
     const result = streamText({
-      model: openai('gpt-4o'),
+      model: __MODEL__,
       messages: convertToModelMessages(messages),
     });
 
@@ -3111,7 +3144,7 @@ const result = await generateObject({
   }),
   providerOptions: {
     openai: {
-      strictSchemas: true, // default behaviour in AI SDK 4
+      strictSchemas: true, // default behavior in AI SDK 4
     } satisfies OpenAIResponsesProviderOptions,
   },
 });
@@ -3129,7 +3162,7 @@ const result = await generateObject({
   }),
   providerOptions: {
     openai: {
-      strictJsonSchema: true, // defaults to false, opt back in to the AI SDK 4 strict behaviour
+      strictJsonSchema: true, // defaults to false, opt back in to the AI SDK 4 strict behavior
     } satisfies OpenAIResponsesProviderOptions,
   },
 });

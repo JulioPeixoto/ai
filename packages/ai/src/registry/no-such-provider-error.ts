@@ -20,11 +20,12 @@ export class NoSuchProviderError extends NoSuchModelError {
     modelId: string;
     modelType:
       | 'languageModel'
-      | 'textEmbeddingModel'
+      | 'embeddingModel'
       | 'imageModel'
       | 'transcriptionModel'
       | 'speechModel'
-      | 'rerankingModel';
+      | 'rerankingModel'
+      | 'videoModel';
     providerId: string;
     availableProviders: string[];
     message?: string;

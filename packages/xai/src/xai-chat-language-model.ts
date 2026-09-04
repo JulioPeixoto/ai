@@ -1,42 +1,72 @@
 import {
-  LanguageModelV3,
-  LanguageModelV3CallWarning,
-  LanguageModelV3Content,
-  LanguageModelV3FinishReason,
-  LanguageModelV3StreamPart,
-  LanguageModelV3Usage,
+  APICallError,
+  type LanguageModelV4,
+  type LanguageModelV4CallOptions,
+  type LanguageModelV4Content,
+  type LanguageModelV4FinishReason,
+  type LanguageModelV4GenerateResult,
+  type LanguageModelV4StreamPart,
+  type LanguageModelV4StreamResult,
+  type LanguageModelV4Usage,
+  type SharedV4Warning,
 } from '@ai-sdk/provider';
 import {
   combineHeaders,
   createEventSourceResponseHandler,
   createJsonResponseHandler,
-  FetchFunction,
+  extractResponseHeaders,
+  isCustomReasoning,
+  mapReasoningToProviderEffort,
   parseProviderOptions,
-  ParseResult,
   postJsonToApi,
+  safeParseJSON,
+  serializeModelOptions,
+  WORKFLOW_SERIALIZE,
+  WORKFLOW_DESERIALIZE,
+  type FetchFunction,
+  type ParseResult,
 } from '@ai-sdk/provider-utils';
 import { z } from 'zod/v4';
 import { convertToXaiChatMessages } from './convert-to-xai-chat-messages';
+import { convertXaiChatUsage } from './convert-xai-chat-usage';
 import { getResponseMetadata } from './get-response-metadata';
 import { mapXaiFinishReason } from './map-xai-finish-reason';
-import { XaiChatModelId, xaiProviderOptions } from './xai-chat-options';
+import { supportsReasoningEffort } from './supports-reasoning-effort';
+import {
+  xaiLanguageModelChatOptions,
+  type XaiChatModelId,
+} from './xai-chat-language-model-options';
 import { xaiFailedResponseHandler } from './xai-error';
 import { prepareTools } from './xai-prepare-tools';
 
 type XaiChatConfig = {
   provider: string;
   baseURL: string | undefined;
-  headers: () => Record<string, string | undefined>;
+  headers?: () => Record<string, string | undefined>;
   generateId: () => string;
   fetch?: FetchFunction;
 };
 
-export class XaiChatLanguageModel implements LanguageModelV3 {
-  readonly specificationVersion = 'v3';
+export class XaiChatLanguageModel implements LanguageModelV4 {
+  readonly specificationVersion = 'v4';
 
   readonly modelId: XaiChatModelId;
 
   private readonly config: XaiChatConfig;
+
+  static [WORKFLOW_SERIALIZE](model: XaiChatLanguageModel) {
+    return serializeModelOptions({
+      modelId: model.modelId,
+      config: model.config,
+    });
+  }
+
+  static [WORKFLOW_DESERIALIZE](options: {
+    modelId: XaiChatModelId;
+    config: XaiChatConfig;
+  }) {
+    return new XaiChatLanguageModel(options.modelId, options.config);
+  }
 
   constructor(modelId: XaiChatModelId, config: XaiChatConfig) {
     this.modelId = modelId;
@@ -61,53 +91,42 @@ export class XaiChatLanguageModel implements LanguageModelV3 {
     presencePenalty,
     stopSequences,
     seed,
+    reasoning,
     responseFormat,
     providerOptions,
     tools,
     toolChoice,
-  }: Parameters<LanguageModelV3['doGenerate']>[0]) {
-    const warnings: LanguageModelV3CallWarning[] = [];
+  }: LanguageModelV4CallOptions) {
+    const warnings: SharedV4Warning[] = [];
 
     // parse xai-specific provider options
     const options =
       (await parseProviderOptions({
         provider: 'xai',
         providerOptions,
-        schema: xaiProviderOptions,
+        schema: xaiLanguageModelChatOptions,
       })) ?? {};
 
     // check for unsupported parameters
     if (topK != null) {
-      warnings.push({
-        type: 'unsupported-setting',
-        setting: 'topK',
-      });
+      warnings.push({ type: 'unsupported', feature: 'topK' });
     }
 
     if (frequencyPenalty != null) {
-      warnings.push({
-        type: 'unsupported-setting',
-        setting: 'frequencyPenalty',
-      });
+      warnings.push({ type: 'unsupported', feature: 'frequencyPenalty' });
     }
 
     if (presencePenalty != null) {
-      warnings.push({
-        type: 'unsupported-setting',
-        setting: 'presencePenalty',
-      });
+      warnings.push({ type: 'unsupported', feature: 'presencePenalty' });
     }
 
     if (stopSequences != null) {
-      warnings.push({
-        type: 'unsupported-setting',
-        setting: 'stopSequences',
-      });
+      warnings.push({ type: 'unsupported', feature: 'stopSequences' });
     }
 
     // convert ai sdk messages to xai format
     const { messages, warnings: messageWarnings } =
-      convertToXaiChatMessages(prompt);
+      await convertToXaiChatMessages(prompt);
     warnings.push(...messageWarnings);
 
     // prepare tools for xai
@@ -121,16 +140,49 @@ export class XaiChatLanguageModel implements LanguageModelV3 {
     });
     warnings.push(...toolWarnings);
 
+    let reasoningEffort = options.reasoningEffort;
+    if (reasoningEffort == null && isCustomReasoning(reasoning)) {
+      if (!supportsReasoningEffort(this.modelId)) {
+        warnings.push({
+          type: 'unsupported',
+          feature: 'reasoning',
+          details: `reasoning "${reasoning}" is not supported by this model.`,
+        });
+      } else if (reasoning === 'none') {
+        reasoningEffort = 'none';
+      } else {
+        reasoningEffort = mapReasoningToProviderEffort({
+          reasoning,
+          effortMap: {
+            minimal: 'low',
+            low: 'low',
+            medium: 'medium',
+            high: 'high',
+            xhigh: this.modelId === 'grok-4.6' ? 'xhigh' : 'high',
+          },
+          warnings,
+        });
+      }
+    }
+
     const baseArgs = {
       // model id
       model: this.modelId,
 
       // standard generation settings
-      max_tokens: maxOutputTokens,
+      logprobs:
+        options.logprobs === true || options.topLogprobs != null
+          ? true
+          : undefined,
+      top_logprobs: options.topLogprobs,
+      max_completion_tokens: maxOutputTokens,
       temperature,
       top_p: topP,
       seed,
-      reasoning_effort: options.reasoningEffort,
+      reasoning_effort: reasoningEffort,
+
+      // scheduling priority
+      service_tier: options.serviceTier,
 
       // parallel function calling
       parallel_function_calling: options.parallel_function_calling,
@@ -199,17 +251,19 @@ export class XaiChatLanguageModel implements LanguageModelV3 {
   }
 
   async doGenerate(
-    options: Parameters<LanguageModelV3['doGenerate']>[0],
-  ): Promise<Awaited<ReturnType<LanguageModelV3['doGenerate']>>> {
+    options: LanguageModelV4CallOptions,
+  ): Promise<LanguageModelV4GenerateResult> {
     const { args: body, warnings } = await this.getArgs(options);
+
+    const url = `${this.config.baseURL ?? 'https://api.x.ai/v1'}/chat/completions`;
 
     const {
       responseHeaders,
       value: response,
       rawValue: rawResponse,
     } = await postJsonToApi({
-      url: `${this.config.baseURL ?? 'https://api.x.ai/v1'}/chat/completions`,
-      headers: combineHeaders(this.config.headers(), options.headers),
+      url,
+      headers: combineHeaders(this.config.headers?.(), options.headers),
       body,
       failedResponseHandler: xaiFailedResponseHandler,
       successfulResponseHandler: createJsonResponseHandler(
@@ -219,8 +273,20 @@ export class XaiChatLanguageModel implements LanguageModelV3 {
       fetch: this.config.fetch,
     });
 
-    const choice = response.choices[0];
-    const content: Array<LanguageModelV3Content> = [];
+    if (response.error != null) {
+      throw new APICallError({
+        message: response.error,
+        url,
+        requestBodyValues: body,
+        statusCode: 200,
+        responseHeaders,
+        responseBody: JSON.stringify(rawResponse),
+        isRetryable: response.code === 'The service is currently unavailable',
+      });
+    }
+
+    const choice = response.choices![0];
+    const content: Array<LanguageModelV4Content> = [];
 
     // extract text content
     if (choice.message.content != null && choice.message.content.length > 0) {
@@ -274,15 +340,21 @@ export class XaiChatLanguageModel implements LanguageModelV3 {
 
     return {
       content,
-      finishReason: mapXaiFinishReason(choice.finish_reason),
-      usage: {
-        inputTokens: response.usage.prompt_tokens,
-        outputTokens: response.usage.completion_tokens,
-        totalTokens: response.usage.total_tokens,
-        reasoningTokens:
-          response.usage.completion_tokens_details?.reasoning_tokens ??
-          undefined,
+      finishReason: {
+        unified: mapXaiFinishReason(choice.finish_reason),
+        raw: choice.finish_reason ?? undefined,
       },
+      usage: response.usage
+        ? convertXaiChatUsage(response.usage)
+        : {
+            inputTokens: { total: 0, noCache: 0, cacheRead: 0, cacheWrite: 0 },
+            outputTokens: { total: 0, text: 0, reasoning: 0 },
+          },
+      ...(response.service_tier != null && {
+        providerMetadata: {
+          xai: { serviceTier: response.service_tier },
+        },
+      }),
       request: { body },
       response: {
         ...getResponseMetadata(response),
@@ -294,8 +366,8 @@ export class XaiChatLanguageModel implements LanguageModelV3 {
   }
 
   async doStream(
-    options: Parameters<LanguageModelV3['doStream']>[0],
-  ): Promise<Awaited<ReturnType<LanguageModelV3['doStream']>>> {
+    options: LanguageModelV4CallOptions,
+  ): Promise<LanguageModelV4StreamResult> {
     const { args, warnings } = await this.getArgs(options);
     const body = {
       ...args,
@@ -305,26 +377,71 @@ export class XaiChatLanguageModel implements LanguageModelV3 {
       },
     };
 
+    const url = `${this.config.baseURL ?? 'https://api.x.ai/v1'}/chat/completions`;
+
     const { responseHeaders, value: response } = await postJsonToApi({
-      url: `${this.config.baseURL ?? 'https://api.x.ai/v1'}/chat/completions`,
-      headers: combineHeaders(this.config.headers(), options.headers),
+      url,
+      headers: combineHeaders(this.config.headers?.(), options.headers),
       body,
       failedResponseHandler: xaiFailedResponseHandler,
-      successfulResponseHandler:
-        createEventSourceResponseHandler(xaiChatChunkSchema),
+      successfulResponseHandler: async ({ response }) => {
+        const responseHeaders = extractResponseHeaders(response);
+        const contentType = response.headers.get('content-type');
+
+        if (contentType?.includes('application/json')) {
+          const responseBody = await response.text();
+          const parsedError = await safeParseJSON({
+            text: responseBody,
+            schema: xaiStreamErrorSchema,
+          });
+
+          if (parsedError.success) {
+            throw new APICallError({
+              message: parsedError.value.error,
+              url,
+              requestBodyValues: body,
+              statusCode: 200,
+              responseHeaders,
+              responseBody,
+              isRetryable:
+                parsedError.value.code ===
+                'The service is currently unavailable',
+            });
+          }
+
+          throw new APICallError({
+            message: 'Invalid JSON response',
+            url,
+            requestBodyValues: body,
+            statusCode: 200,
+            responseHeaders,
+            responseBody,
+          });
+        }
+
+        return createEventSourceResponseHandler(xaiChatChunkSchema)({
+          response,
+          url,
+          requestBodyValues: body,
+        });
+      },
       abortSignal: options.abortSignal,
       fetch: this.config.fetch,
     });
 
-    let finishReason: LanguageModelV3FinishReason = 'unknown';
-    const usage: LanguageModelV3Usage = {
-      inputTokens: undefined,
-      outputTokens: undefined,
-      totalTokens: undefined,
+    let finishReason: LanguageModelV4FinishReason = {
+      unified: 'other',
+      raw: undefined,
     };
+    let usage: LanguageModelV4Usage | undefined = undefined;
+    let serviceTier: string | undefined = undefined;
     let isFirstChunk = true;
-    const contentBlocks: Record<string, { type: 'text' | 'reasoning' }> = {};
+    const contentBlocks: Record<
+      string,
+      { type: 'text' | 'reasoning'; ended: boolean }
+    > = {};
     const lastReasoningDeltas: Record<string, string> = {};
+    let activeReasoningBlockId: string | undefined = undefined;
 
     const self = this;
 
@@ -332,7 +449,7 @@ export class XaiChatLanguageModel implements LanguageModelV3 {
       stream: response.pipeThrough(
         new TransformStream<
           ParseResult<z.infer<typeof xaiChatChunkSchema>>,
-          LanguageModelV3StreamPart
+          LanguageModelV4StreamPart
         >({
           start(controller) {
             controller.enqueue({ type: 'stream-start', warnings });
@@ -374,19 +491,22 @@ export class XaiChatLanguageModel implements LanguageModelV3 {
 
             // update usage if present
             if (value.usage != null) {
-              usage.inputTokens = value.usage.prompt_tokens;
-              usage.outputTokens = value.usage.completion_tokens;
-              usage.totalTokens = value.usage.total_tokens;
-              usage.reasoningTokens =
-                value.usage.completion_tokens_details?.reasoning_tokens ??
-                undefined;
+              usage = convertXaiChatUsage(value.usage);
+            }
+
+            // the applied tier is repeated on every chunk; keep the latest
+            if (value.service_tier != null) {
+              serviceTier = value.service_tier;
             }
 
             const choice = value.choices[0];
 
             // update finish reason if present
             if (choice?.finish_reason != null) {
-              finishReason = mapXaiFinishReason(choice.finish_reason);
+              finishReason = {
+                unified: mapXaiFinishReason(choice.finish_reason),
+                raw: choice.finish_reason,
+              };
             }
 
             // exit if no delta to process
@@ -401,6 +521,19 @@ export class XaiChatLanguageModel implements LanguageModelV3 {
             if (delta.content != null && delta.content.length > 0) {
               const textContent = delta.content;
 
+              // end active reasoning block when text content arrives
+              if (
+                activeReasoningBlockId != null &&
+                !contentBlocks[activeReasoningBlockId].ended
+              ) {
+                controller.enqueue({
+                  type: 'reasoning-end',
+                  id: activeReasoningBlockId,
+                });
+                contentBlocks[activeReasoningBlockId].ended = true;
+                activeReasoningBlockId = undefined;
+              }
+
               // skip if this content duplicates the last assistant message
               const lastMessage = body.messages[body.messages.length - 1];
               if (
@@ -413,7 +546,7 @@ export class XaiChatLanguageModel implements LanguageModelV3 {
               const blockId = `text-${value.id || choiceIndex}`;
 
               if (contentBlocks[blockId] == null) {
-                contentBlocks[blockId] = { type: 'text' };
+                contentBlocks[blockId] = { type: 'text', ended: false };
                 controller.enqueue({
                   type: 'text-start',
                   id: blockId,
@@ -441,7 +574,8 @@ export class XaiChatLanguageModel implements LanguageModelV3 {
               lastReasoningDeltas[blockId] = delta.reasoning_content;
 
               if (contentBlocks[blockId] == null) {
-                contentBlocks[blockId] = { type: 'reasoning' };
+                contentBlocks[blockId] = { type: 'reasoning', ended: false };
+                activeReasoningBlockId = blockId;
                 controller.enqueue({
                   type: 'reasoning-start',
                   id: blockId,
@@ -457,6 +591,19 @@ export class XaiChatLanguageModel implements LanguageModelV3 {
 
             // process tool calls
             if (delta.tool_calls != null) {
+              // end active reasoning block before tool calls start
+              if (
+                activeReasoningBlockId != null &&
+                !contentBlocks[activeReasoningBlockId].ended
+              ) {
+                controller.enqueue({
+                  type: 'reasoning-end',
+                  id: activeReasoningBlockId,
+                });
+                contentBlocks[activeReasoningBlockId].ended = true;
+                activeReasoningBlockId = undefined;
+              }
+
               for (const toolCall of delta.tool_calls) {
                 // xai tool calls come in one piece (like mistral)
                 const toolCallId = toolCall.id;
@@ -489,14 +636,32 @@ export class XaiChatLanguageModel implements LanguageModelV3 {
           },
 
           flush(controller) {
+            // end any blocks that haven't been ended yet
             for (const [blockId, block] of Object.entries(contentBlocks)) {
-              controller.enqueue({
-                type: block.type === 'text' ? 'text-end' : 'reasoning-end',
-                id: blockId,
-              });
+              if (!block.ended) {
+                controller.enqueue({
+                  type: block.type === 'text' ? 'text-end' : 'reasoning-end',
+                  id: blockId,
+                });
+              }
             }
 
-            controller.enqueue({ type: 'finish', finishReason, usage });
+            controller.enqueue({
+              type: 'finish',
+              finishReason,
+              usage: usage ?? {
+                inputTokens: {
+                  total: 0,
+                  noCache: 0,
+                  cacheRead: 0,
+                  cacheWrite: 0,
+                },
+                outputTokens: { total: 0, text: 0, reasoning: 0 },
+              },
+              ...(serviceTier != null && {
+                providerMetadata: { xai: { serviceTier } },
+              }),
+            });
           },
         }),
       ),
@@ -507,48 +672,73 @@ export class XaiChatLanguageModel implements LanguageModelV3 {
 }
 
 // XAI API Response Schemas
-const xaiUsageSchema = z.object({
-  prompt_tokens: z.number(),
-  completion_tokens: z.number(),
-  total_tokens: z.number(),
-  completion_tokens_details: z
-    .object({
-      reasoning_tokens: z.number().nullish(),
-    })
-    .nullish(),
-});
+const xaiUsageSchema = z
+  .object({
+    prompt_tokens: z.number(),
+    completion_tokens: z.number(),
+    total_tokens: z.number(),
+    cost_in_usd_ticks: z.number().nullish(),
+    prompt_tokens_details: z
+      .object({
+        text_tokens: z.number().nullish(),
+        audio_tokens: z.number().nullish(),
+        image_tokens: z.number().nullish(),
+        cached_tokens: z.number().nullish(),
+      })
+      .catchall(z.json())
+      .nullish(),
+    completion_tokens_details: z
+      .object({
+        reasoning_tokens: z.number().nullish(),
+        audio_tokens: z.number().nullish(),
+        accepted_prediction_tokens: z.number().nullish(),
+        rejected_prediction_tokens: z.number().nullish(),
+      })
+      .catchall(z.json())
+      .nullish(),
+  })
+  .catchall(z.json());
 
-const xaiChatResponseSchema = z.object({
+export type XaiChatUsage = z.infer<typeof xaiUsageSchema>;
+
+export const xaiChatResponseSchema = z.object({
   id: z.string().nullish(),
   created: z.number().nullish(),
   model: z.string().nullish(),
-  choices: z.array(
-    z.object({
-      message: z.object({
-        role: z.literal('assistant'),
-        content: z.string().nullish(),
-        reasoning_content: z.string().nullish(),
-        tool_calls: z
-          .array(
-            z.object({
-              id: z.string(),
-              type: z.literal('function'),
-              function: z.object({
-                name: z.string(),
-                arguments: z.string(),
+  choices: z
+    .array(
+      z.object({
+        message: z.object({
+          role: z.enum(['assistant', 'tool']),
+          content: z.string().nullish(),
+          reasoning_content: z.string().nullish(),
+          tool_calls: z
+            .array(
+              z.object({
+                id: z.string(),
+                type: z.literal('function'),
+                function: z.object({
+                  name: z.string(),
+                  arguments: z.string(),
+                }),
               }),
-            }),
-          )
-          .nullish(),
+            )
+            .nullish(),
+        }),
+        index: z.number(),
+        finish_reason: z.string().nullish(),
       }),
-      index: z.number(),
-      finish_reason: z.string().nullish(),
-    }),
-  ),
-  object: z.literal('chat.completion'),
-  usage: xaiUsageSchema,
+    )
+    .nullish(),
+  object: z.literal('chat.completion').nullish(),
+  usage: xaiUsageSchema.nullish(),
   citations: z.array(z.string().url()).nullish(),
+  service_tier: z.string().nullish(),
+  code: z.string().nullish(),
+  error: z.string().nullish(),
 });
+
+export type XaiChatResponse = z.infer<typeof xaiChatResponseSchema>;
 
 const xaiChatChunkSchema = z.object({
   id: z.string().nullish(),
@@ -579,4 +769,10 @@ const xaiChatChunkSchema = z.object({
   ),
   usage: xaiUsageSchema.nullish(),
   citations: z.array(z.string().url()).nullish(),
+  service_tier: z.string().nullish(),
+});
+
+const xaiStreamErrorSchema = z.object({
+  code: z.string(),
+  error: z.string(),
 });

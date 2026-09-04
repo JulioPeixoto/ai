@@ -1,21 +1,26 @@
 import {
-  FetchFunction,
-  FlexibleSchema,
-  InferSchema,
   isAbortError,
+  resolve,
+  normalizeHeaders,
   safeValidateTypes,
+  type FetchFunction,
+  type FlexibleSchema,
+  type InferSchema,
+  type Resolvable,
 } from '@ai-sdk/provider-utils';
-import { asSchema, DeepPartial, isDeepEqualData, parsePartialJson } from 'ai';
+import {
+  asSchema,
+  isDeepEqualData,
+  parsePartialJson,
+  type DeepPartial,
+} from 'ai';
 import { useCallback, useId, useRef, useState } from 'react';
 import useSWR from 'swr';
 
 // use function to allow for mocking in tests:
 const getOriginalFetch = () => fetch;
 
-export type Experimental_UseObjectOptions<
-  SCHEMA extends FlexibleSchema,
-  RESULT,
-> = {
+export type UseObjectOptions<SCHEMA extends FlexibleSchema, RESULT> = {
   /**
    * The API endpoint. It should stream JSON that matches the schema as chunked text.
    */
@@ -39,24 +44,24 @@ export type Experimental_UseObjectOptions<
   initialValue?: DeepPartial<RESULT>;
 
   /**
-Custom fetch implementation. You can use it as a middleware to intercept requests,
-or to provide a custom fetch implementation for e.g. testing.
-    */
+   * Custom fetch implementation. You can use it as a middleware to intercept requests,
+   * or to provide a custom fetch implementation for e.g. testing.
+   */
   fetch?: FetchFunction;
 
   /**
-Callback that is called when the stream has finished.
-     */
+   * Callback that is called when the stream has finished.
+   */
   onFinish?: (event: {
     /**
-The generated object (typed according to the schema).
-Can be undefined if the final object does not match the schema.
-   */
+     * The generated object (typed according to the schema).
+     * Can be undefined if the final object does not match the schema.
+     */
     object: RESULT | undefined;
 
     /**
-Optional error object. This is e.g. a TypeValidationError when the final object does not match the schema.
- */
+     * Optional error object. This is e.g. a TypeValidationError when the final object does not match the schema.
+     */
     error: Error | undefined;
   }) => Promise<void> | void;
 
@@ -67,8 +72,10 @@ Optional error object. This is e.g. a TypeValidationError when the final object 
 
   /**
    * Additional HTTP headers to be included in the request.
+   * Can be a static object, a function that returns headers, or an async function
+   * for dynamic auth tokens.
    */
-  headers?: Record<string, string> | Headers;
+  headers?: Resolvable<Record<string, string> | Headers>;
 
   /**
    * The credentials mode to be used for the fetch request.
@@ -78,7 +85,7 @@ Optional error object. This is e.g. a TypeValidationError when the final object 
   credentials?: RequestCredentials;
 };
 
-export type Experimental_UseObjectHelpers<RESULT, INPUT> = {
+export type UseObjectHelpers<RESULT, INPUT> = {
   /**
    * Calls the API with the provided input as JSON body.
    */
@@ -110,7 +117,7 @@ export type Experimental_UseObjectHelpers<RESULT, INPUT> = {
   clear: () => void;
 };
 
-function useObject<
+export function useObject<
   SCHEMA extends FlexibleSchema,
   RESULT = InferSchema<SCHEMA>,
   INPUT = any,
@@ -124,17 +131,14 @@ function useObject<
   onFinish,
   headers,
   credentials,
-}: Experimental_UseObjectOptions<
-  SCHEMA,
-  RESULT
->): Experimental_UseObjectHelpers<RESULT, INPUT> {
+}: UseObjectOptions<SCHEMA, RESULT>): UseObjectHelpers<RESULT, INPUT> {
   // Generate an unique id if not provided.
   const hookId = useId();
   const completionId = id ?? hookId;
 
   // Store the completion state in SWR, using the completionId as the key to share states.
   const { data, mutate } = useSWR<DeepPartial<RESULT>>(
-    [api, completionId],
+    [completionId, 'object'],
     null,
     { fallbackData: initialValue },
   );
@@ -148,7 +152,7 @@ function useObject<
   const stop = useCallback(() => {
     try {
       abortControllerRef.current?.abort();
-    } catch (ignored) {
+    } catch {
     } finally {
       setIsLoading(false);
       abortControllerRef.current = null;
@@ -164,12 +168,15 @@ function useObject<
       const abortController = new AbortController();
       abortControllerRef.current = abortController;
 
+      // Resolve headers at request time (supports async functions for dynamic auth tokens)
+      const resolvedHeaders = await resolve(headers);
+
       const actualFetch = fetch ?? getOriginalFetch();
       const response = await actualFetch(api, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          ...headers,
+          ...normalizeHeaders(resolvedHeaders),
         },
         credentials,
         signal: abortController.signal,
@@ -178,7 +185,7 @@ function useObject<
 
       if (!response.ok) {
         throw new Error(
-          (await response.text()) ?? 'Failed to fetch the response.',
+          (await response.text()) || 'Failed to fetch the response.',
         );
       }
 
@@ -257,5 +264,3 @@ function useObject<
     clear,
   };
 }
-
-export const experimental_useObject = useObject;

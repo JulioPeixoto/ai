@@ -1,44 +1,61 @@
-import { InferSchema, lazySchema, zodSchema } from '@ai-sdk/provider-utils';
-import { z } from 'zod/v4';
-
 // https://vercel.com/docs/ai-gateway/provider-options
-const gatewayProviderOptions = lazySchema(() =>
-  zodSchema(
-    z.object({
-      /**
-       * Array of provider slugs that are the only ones allowed to be used.
-       *
-       * Example: `['azure', 'openai']` will only allow Azure and OpenAI to be used.
-       */
-      only: z.array(z.string()).optional(),
-      /**
-       * Array of provider slugs that specifies the sequence in which providers should be attempted.
-       *
-       * Example: `['bedrock', 'anthropic']` will try Amazon Bedrock first, then Anthropic as fallback.
-       */
-      order: z.array(z.string()).optional(),
-      /**
-       * The unique identifier for the end user on behalf of whom the request was made.
-       *
-       * Used for spend tracking and attribution purposes.
-       */
-      user: z.string().optional(),
-      /**
-       * User-specified tags for use in reporting and filtering usage.
-       *
-       * For example, spend tracking reporting by feature or prompt version.
-       *
-       * Example: `['chat', 'v2']`
-       */
-      tags: z.array(z.string()).optional(),
-      /**
-       * Array of model slugs specifying fallback models to use in order.
-       *
-       * Example: `['openai/gpt-5-nano', 'zai/glm-4.6']` will try `openai/gpt-5-nano` first, then `zai/glm-4.6` as fallback.
-       */
-      models: z.array(z.string()).optional(),
-    }),
-  ),
-);
+export type GatewayProviderOptions = {
+  /**
+   * Service-owned options may be added by the Gateway without requiring an SDK
+   * release. The Gateway service validates and applies the runtime schema.
+   */
+  [key: string]: unknown;
 
-export type GatewayProviderOptions = InferSchema<typeof gatewayProviderOptions>;
+  /** Request-scoped BYOK credentials to use instead of cached credentials. */
+  byok?: Record<string, Array<Record<string, unknown>>>;
+
+  /** Enables automatic caching behavior when supported by the Gateway. */
+  caching?: 'auto';
+
+  /** Filter to providers that do not train on prompt data. */
+  disallowPromptTraining?: boolean;
+
+  /**
+   * Restrict routing to models that have all of the given capabilities.
+   * Currently supports `'implicit-caching'` and `'vision'` (image input).
+   */
+  has?: Array<'implicit-caching' | 'vision'>;
+
+  /**
+   * Idempotency key for `experimental_startTextBatch`: retries with the same
+   * key replay the original batch instead of creating a duplicate.
+   */
+  idempotencyKey?: string;
+
+  /** Array of model slugs specifying fallback models to use in order. */
+  models?: string[];
+
+  /** Array of provider slugs that are the only ones allowed to be used. */
+  only?: string[];
+
+  /** Array of provider slugs specifying the provider attempt order. */
+  order?: string[];
+
+  /** Per-provider timeouts for BYOK credentials in milliseconds. */
+  providerTimeouts?: {
+    byok?: Record<string, number>;
+  };
+
+  /** Entity identifier against which quota is tracked. */
+  quotaEntityId?: string;
+
+  /** Unified service tier intent. */
+  serviceTier?: 'flex' | 'priority';
+
+  /** Sort providers by a performance or cost metric before routing. */
+  sort?: 'cost' | 'tps' | 'ttft';
+
+  /** User-specified tags for reporting and filtering usage. */
+  tags?: string[];
+
+  /** End-user identifier for spend tracking and attribution. */
+  user?: string;
+
+  /** Filter to providers with zero data retention agreements. */
+  zeroDataRetention?: boolean;
+};

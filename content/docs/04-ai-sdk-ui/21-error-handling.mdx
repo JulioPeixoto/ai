@@ -7,23 +7,23 @@ description: Learn how to handle errors in the AI SDK UI
 
 ## Warnings
 
-The AI SDK shows warnings when something might not work as expected. These warnings help you fix problems before they cause errors.
+The AI SDK shows warnings when something might not work as expected.
+These warnings help you fix problems before they cause errors.
 
 ### When Warnings Appear
 
 Warnings are shown in the browser console when:
 
-- **Unsupported settings**: You use a setting that the AI model doesn't support
-- **Unsupported tools**: You use a tool that the AI model can't use
-- **Other issues**: The AI model reports other problems
+- **Unsupported features**: You use a feature or setting that is not supported by the AI model (e.g., certain options or parameters).
+- **Compatibility warnings**: A feature is used in a compatibility mode, which might work differently or less optimally than intended.
+- **Other warnings**: The AI model reports another type of issue, such as general problems or advisory messages.
 
 ### Warning Messages
 
 All warnings start with "AI SDK Warning:" so you can easily find them. For example:
 
 ```
-AI SDK Warning: The "temperature" setting is not supported by this model
-AI SDK Warning: The tool "calculator" is not supported by this model
+AI SDK Warning: The feature "temperature" is not supported by this model
 ```
 
 ### Turning Off Warnings
@@ -40,22 +40,14 @@ globalThis.AI_SDK_LOG_WARNINGS = false;
 
 #### Custom Warning Handler
 
-You can also provide your own function to handle warnings:
+You can also provide your own function to handle warnings.
+It receives provider id, model id, and a list of warnings.
 
 ```ts
-globalThis.AI_SDK_LOG_WARNINGS = warnings => {
+globalThis.AI_SDK_LOG_WARNINGS = ({ warnings, provider, model }) => {
   // Handle warnings your own way
-  warnings.forEach(warning => {
-    // Your custom logic here
-    console.log('Custom warning:', warning);
-  });
 };
 ```
-
-<Note>
-  Custom warning functions are experimental and can change in patch releases
-  without notice.
-</Note>
 
 ## Error Handling
 
@@ -70,7 +62,7 @@ You can use the error object to show an error message, disable the submit button
   server.
 </Note>
 
-```tsx file="app/page.tsx" highlight="7,18-25,31"
+```tsx file="app/page.tsx" highlight="8,28-35,41"
 'use client';
 
 import { useChat } from '@ai-sdk/react';
@@ -119,11 +111,13 @@ export default function Chat() {
 }
 ```
 
-#### Alternative: replace last message
+#### Alternative: replace the failed message
 
-Alternatively you can write a custom submit handler that replaces the last message when an error is present.
+Alternatively, you can write a custom submit handler that replaces the failed
+user message with new input. If the assistant response started streaming before
+the error, remove both the partial assistant response and its user message.
 
-```tsx file="app/page.tsx" highlight="17-23,35"
+```tsx file="app/page.tsx" highlight="13-19,21-22,39"
 'use client';
 
 import { useChat } from '@ai-sdk/react';
@@ -137,7 +131,11 @@ export default function Chat() {
     event.preventDefault();
 
     if (error != null) {
-      setMessages(messages.slice(0, -1)); // remove last message
+      setMessages(messages =>
+        messages.at(-1)?.role === 'assistant'
+          ? messages.slice(0, -2)
+          : messages.slice(0, -1),
+      );
     }
 
     sendMessage({ text: input });

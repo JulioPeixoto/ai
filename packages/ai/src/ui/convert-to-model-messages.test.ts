@@ -1,12 +1,46 @@
-import { ModelMessage } from '@ai-sdk/provider-utils';
+import { tool, type ModelMessage } from '@ai-sdk/provider-utils';
+import { convertArrayToReadableStream } from '@ai-sdk/provider-utils/test';
 import { describe, expect, it } from 'vitest';
+import z from 'zod/v4';
+import type { UIMessageChunk } from '../ui-message-stream/ui-message-chunks';
+import { consumeStream } from '../util/consume-stream';
 import { convertToModelMessages } from './convert-to-model-messages';
-import { UIMessage } from './ui-messages';
+import {
+  createStreamingUIMessageState,
+  processUIMessageStream,
+} from './process-ui-message-stream';
+import type { UIMessage } from './ui-messages';
+
+async function recordAssistantMessageFromChunks<
+  UI_MESSAGE extends UIMessage = UIMessage,
+>(chunks: UIMessageChunk[]): Promise<UI_MESSAGE> {
+  const state = createStreamingUIMessageState<UI_MESSAGE>({
+    messageId: 'msg-123',
+    lastMessage: undefined,
+  });
+
+  await consumeStream({
+    stream: processUIMessageStream<UI_MESSAGE>({
+      stream: convertArrayToReadableStream(chunks),
+      runUpdateMessageJob: async job => {
+        await job({
+          state,
+          write: () => {},
+        });
+      },
+      onError: error => {
+        throw error;
+      },
+    }),
+  });
+
+  return state.message;
+}
 
 describe('convertToModelMessages', () => {
   describe('system message', () => {
-    it('should convert a simple system message', () => {
-      const result = convertToModelMessages([
+    it('should convert a simple system message', async () => {
+      const result = await convertToModelMessages([
         {
           role: 'system',
           parts: [{ text: 'System message', type: 'text' }],
@@ -16,8 +50,8 @@ describe('convertToModelMessages', () => {
       expect(result).toEqual([{ role: 'system', content: 'System message' }]);
     });
 
-    it('should convert a system message with provider metadata', () => {
-      const result = convertToModelMessages([
+    it('should convert a system message with provider metadata', async () => {
+      const result = await convertToModelMessages([
         {
           role: 'system',
           parts: [
@@ -39,8 +73,8 @@ describe('convertToModelMessages', () => {
       ]);
     });
 
-    it('should merge provider metadata from multiple text parts in system message', () => {
-      const result = convertToModelMessages([
+    it('should merge provider metadata from multiple text parts in system message', async () => {
+      const result = await convertToModelMessages([
         {
           role: 'system',
           parts: [
@@ -70,7 +104,7 @@ describe('convertToModelMessages', () => {
       ]);
     });
 
-    it('should convert a system message with Anthropic cache control metadata', () => {
+    it('should convert a system message with Anthropic cache control metadata', async () => {
       const SYSTEM_PROMPT = 'You are a helpful assistant.';
 
       const systemMessage = {
@@ -89,7 +123,7 @@ describe('convertToModelMessages', () => {
         ],
       };
 
-      const result = convertToModelMessages([systemMessage]);
+      const result = await convertToModelMessages([systemMessage]);
 
       expect(result).toEqual([
         {
@@ -106,8 +140,8 @@ describe('convertToModelMessages', () => {
   });
 
   describe('user message', () => {
-    it('should convert a simple user message', () => {
-      const result = convertToModelMessages([
+    it('should convert a simple user message', async () => {
+      const result = await convertToModelMessages([
         {
           role: 'user',
           parts: [{ text: 'Hello, AI!', type: 'text' }],
@@ -129,8 +163,8 @@ describe('convertToModelMessages', () => {
       `);
     });
 
-    it('should convert a simple user message with provider metadata', () => {
-      const result = convertToModelMessages([
+    it('should convert a simple user message with provider metadata', async () => {
+      const result = await convertToModelMessages([
         {
           role: 'user',
           parts: [
@@ -163,8 +197,8 @@ describe('convertToModelMessages', () => {
       `);
     });
 
-    it('should handle user message file parts', () => {
-      const result = convertToModelMessages([
+    it('should handle user message file parts', async () => {
+      const result = await convertToModelMessages([
         {
           role: 'user',
           parts: [
@@ -185,7 +219,10 @@ describe('convertToModelMessages', () => {
             {
               type: 'file',
               mediaType: 'image/jpeg',
-              data: 'https://example.com/image.jpg',
+              data: {
+                type: 'url',
+                url: new URL('https://example.com/image.jpg'),
+              },
             },
             { type: 'text', text: 'Check this image' },
           ],
@@ -193,8 +230,8 @@ describe('convertToModelMessages', () => {
       ]);
     });
 
-    it('should handle user message file parts with provider metadata', () => {
-      const result = convertToModelMessages([
+    it('should handle user message file parts with provider metadata', async () => {
+      const result = await convertToModelMessages([
         {
           role: 'user',
           parts: [
@@ -216,7 +253,10 @@ describe('convertToModelMessages', () => {
             {
               type: 'file',
               mediaType: 'image/jpeg',
-              data: 'https://example.com/image.jpg',
+              data: {
+                type: 'url',
+                url: new URL('https://example.com/image.jpg'),
+              },
               providerOptions: { testProvider: { signature: '1234567890' } },
             },
             { type: 'text', text: 'Check this image' },
@@ -225,8 +265,8 @@ describe('convertToModelMessages', () => {
       ]);
     });
 
-    it('should include filename for user file parts when provided', () => {
-      const result = convertToModelMessages([
+    it('should include filename for user file parts when provided', async () => {
+      const result = await convertToModelMessages([
         {
           role: 'user',
           parts: [
@@ -247,17 +287,56 @@ describe('convertToModelMessages', () => {
             {
               type: 'file',
               mediaType: 'image/jpeg',
-              data: 'https://example.com/image.jpg',
+              data: {
+                type: 'url',
+                url: new URL('https://example.com/image.jpg'),
+              },
               filename: 'image.jpg',
             },
           ],
         },
       ]);
     });
+
+    it('should use providerReference as data for user file parts', async () => {
+      const result = await convertToModelMessages([
+        {
+          role: 'user',
+          parts: [
+            {
+              type: 'file',
+              mediaType: 'application/pdf',
+              filename: 'doc.pdf',
+              url: 'data:application/pdf;base64,abc',
+              providerReference: { openai: 'file-abc123' },
+            },
+            { type: 'text', text: 'Summarize this' },
+          ],
+        },
+      ]);
+
+      expect(result).toEqual([
+        {
+          role: 'user',
+          content: [
+            {
+              type: 'file',
+              mediaType: 'application/pdf',
+              filename: 'doc.pdf',
+              data: {
+                type: 'reference',
+                reference: { openai: 'file-abc123' },
+              },
+            },
+            { type: 'text', text: 'Summarize this' },
+          ],
+        },
+      ]);
+    });
   });
 
-  it('should not include filename for user file parts when not provided', () => {
-    const result = convertToModelMessages([
+  it('should not include filename for user file parts when not provided', async () => {
+    const result = await convertToModelMessages([
       {
         role: 'user',
         parts: [
@@ -277,7 +356,10 @@ describe('convertToModelMessages', () => {
           {
             type: 'file',
             mediaType: 'image/jpeg',
-            data: 'https://example.com/image.jpg',
+            data: {
+              type: 'url',
+              url: new URL('https://example.com/image.jpg'),
+            },
           },
         ],
       },
@@ -285,8 +367,44 @@ describe('convertToModelMessages', () => {
   });
 
   describe('assistant message', () => {
-    it('should convert a simple assistant text message', () => {
-      const result = convertToModelMessages([
+    it('should convert custom assistant parts', async () => {
+      const result = await convertToModelMessages([
+        {
+          role: 'assistant',
+          parts: [
+            {
+              type: 'custom',
+              kind: 'test-provider.compaction',
+              providerMetadata: {
+                openai: {
+                  itemId: 'cmp_123',
+                },
+              },
+            },
+          ],
+        },
+      ]);
+
+      expect(result).toEqual([
+        {
+          role: 'assistant',
+          content: [
+            {
+              type: 'custom',
+              kind: 'test-provider.compaction',
+              providerOptions: {
+                openai: {
+                  itemId: 'cmp_123',
+                },
+              },
+            },
+          ],
+        },
+      ] satisfies ModelMessage[]);
+    });
+
+    it('should convert a simple assistant text message', async () => {
+      const result = await convertToModelMessages([
         {
           role: 'assistant',
           parts: [{ type: 'text', text: 'Hello, human!', state: 'done' }],
@@ -301,8 +419,8 @@ describe('convertToModelMessages', () => {
       ]);
     });
 
-    it('should convert a simple assistant text message with provider metadata', () => {
-      const result = convertToModelMessages([
+    it('should convert a simple assistant text message with provider metadata', async () => {
+      const result = await convertToModelMessages([
         {
           role: 'assistant',
           parts: [
@@ -336,8 +454,8 @@ describe('convertToModelMessages', () => {
       `);
     });
 
-    it('should convert an assistant message with reasoning', () => {
-      const result = convertToModelMessages([
+    it('should convert an assistant message with reasoning', async () => {
+      const result = await convertToModelMessages([
         {
           role: 'assistant',
           parts: [
@@ -384,8 +502,8 @@ describe('convertToModelMessages', () => {
       ] satisfies ModelMessage[]);
     });
 
-    it('should convert an assistant message with file parts', () => {
-      const result = convertToModelMessages([
+    it('should convert an assistant message with file parts', async () => {
+      const result = await convertToModelMessages([
         {
           role: 'assistant',
           parts: [
@@ -405,15 +523,18 @@ describe('convertToModelMessages', () => {
             {
               type: 'file',
               mediaType: 'image/png',
-              data: 'data:image/png;base64,dGVzdA==',
+              data: {
+                type: 'url',
+                url: new URL('data:image/png;base64,dGVzdA=='),
+              },
             },
           ],
         },
       ] satisfies ModelMessage[]);
     });
 
-    it('should include filename for assistant file parts when provided', () => {
-      const result = convertToModelMessages([
+    it('should include filename for assistant file parts when provided', async () => {
+      const result = await convertToModelMessages([
         {
           role: 'assistant',
           parts: [
@@ -434,7 +555,10 @@ describe('convertToModelMessages', () => {
             {
               type: 'file',
               mediaType: 'image/png',
-              data: 'data:image/png;base64,dGVzdA==',
+              data: {
+                type: 'url',
+                url: new URL('data:image/png;base64,dGVzdA=='),
+              },
               filename: 'test.png',
             },
           ],
@@ -442,8 +566,79 @@ describe('convertToModelMessages', () => {
       ] as unknown as ModelMessage[]);
     });
 
-    it('should handle assistant message with tool output available', () => {
-      const result = convertToModelMessages([
+    it('should handle assistant message file parts with provider metadata', async () => {
+      const result = await convertToModelMessages([
+        {
+          role: 'assistant',
+          parts: [
+            {
+              type: 'file',
+              mediaType: 'image/png',
+              url: 'data:image/png;base64,dGVzdA==',
+              providerMetadata: {
+                testProvider: { signature: 'test-signature' },
+              },
+            },
+          ],
+        },
+      ]);
+
+      expect(result).toEqual([
+        {
+          role: 'assistant',
+          content: [
+            {
+              type: 'file',
+              mediaType: 'image/png',
+              data: {
+                type: 'url',
+                url: new URL('data:image/png;base64,dGVzdA=='),
+              },
+              providerOptions: {
+                testProvider: { signature: 'test-signature' },
+              },
+            },
+          ],
+        },
+      ] as unknown as ModelMessage[]);
+    });
+
+    it('should use providerReference as data for assistant file parts', async () => {
+      const result = await convertToModelMessages([
+        {
+          role: 'assistant',
+          parts: [
+            {
+              type: 'file',
+              mediaType: 'application/pdf',
+              filename: 'doc.pdf',
+              url: 'data:application/pdf;base64,xyz',
+              providerReference: { anthropic: 'file-xyz789' },
+            },
+          ],
+        },
+      ]);
+
+      expect(result).toEqual([
+        {
+          role: 'assistant',
+          content: [
+            {
+              type: 'file',
+              mediaType: 'application/pdf',
+              filename: 'doc.pdf',
+              data: {
+                type: 'reference',
+                reference: { anthropic: 'file-xyz789' },
+              },
+            },
+          ],
+        },
+      ] as unknown as ModelMessage[]);
+    });
+
+    it('should handle assistant message with tool output available', async () => {
+      const result = await convertToModelMessages([
         {
           role: 'assistant',
           parts: [
@@ -522,8 +717,65 @@ describe('convertToModelMessages', () => {
     });
 
     describe('tool output error', () => {
-      it('should handle assistant message with tool output error that has raw input', () => {
-        const result = convertToModelMessages([
+      it('should preserve result provider metadata on a failed tool call when call metadata is unavailable', async () => {
+        const result = await convertToModelMessages([
+          {
+            role: 'assistant',
+            parts: [
+              {
+                type: 'tool-createWidget',
+                state: 'output-error',
+                toolCallId: 'call1',
+                input: undefined,
+                rawInput: {},
+                errorText: 'Invalid input',
+                resultProviderMetadata: {
+                  openai: {
+                    namespace: 'widget_tools',
+                  },
+                },
+              },
+            ],
+          },
+        ]);
+
+        expect(result).toEqual([
+          {
+            role: 'assistant',
+            content: [
+              {
+                type: 'tool-call',
+                toolCallId: 'call1',
+                toolName: 'createWidget',
+                input: {},
+                providerExecuted: undefined,
+                providerOptions: {
+                  openai: {
+                    namespace: 'widget_tools',
+                  },
+                },
+              },
+            ],
+          },
+          {
+            role: 'tool',
+            content: [
+              {
+                type: 'tool-result',
+                toolCallId: 'call1',
+                toolName: 'createWidget',
+                output: {
+                  type: 'error-text',
+                  value: 'Invalid input',
+                },
+              },
+            ],
+          },
+        ]);
+      });
+
+      it('should handle assistant message with tool output error that has raw input', async () => {
+        const result = await convertToModelMessages([
           {
             role: 'assistant',
             parts: [
@@ -539,7 +791,7 @@ describe('convertToModelMessages', () => {
                 toolCallId: 'call1',
                 errorText: 'Error: Invalid input',
                 input: undefined,
-                rawInput: { operation: 'add', numbers: [1, 2] },
+                rawInput: '{"operation":"add","numbers":[1,2]',
               },
             ],
           },
@@ -554,13 +806,7 @@ describe('convertToModelMessages', () => {
                 "type": "text",
               },
               {
-                "input": {
-                  "numbers": [
-                    1,
-                    2,
-                  ],
-                  "operation": "add",
-                },
+                "input": "{\"operation\":\"add\",\"numbers\":[1,2]",
                 "providerExecuted": undefined,
                 "toolCallId": "call1",
                 "toolName": "calculator",
@@ -587,8 +833,8 @@ describe('convertToModelMessages', () => {
       `);
       });
 
-      it('should handle assistant message with tool output error that has no raw input', () => {
-        const result = convertToModelMessages([
+      it('should handle assistant message with tool output error that has no raw input', async () => {
+        const result = await convertToModelMessages([
           {
             role: 'assistant',
             parts: [
@@ -652,8 +898,8 @@ describe('convertToModelMessages', () => {
       });
     });
 
-    it('should handle assistant message with provider-executed tool output available', () => {
-      const result = convertToModelMessages([
+    it('should handle assistant message with provider-executed tool output available', async () => {
+      const result = await convertToModelMessages([
         {
           role: 'assistant',
           parts: [
@@ -712,8 +958,8 @@ describe('convertToModelMessages', () => {
       `);
     });
 
-    it('should handle assistant message with provider-executed tool output error', () => {
-      const result = convertToModelMessages([
+    it('should handle assistant message with provider-executed tool output error', async () => {
+      const result = await convertToModelMessages([
         {
           role: 'assistant',
           parts: [
@@ -772,8 +1018,140 @@ describe('convertToModelMessages', () => {
       `);
     });
 
-    it('should handle assistant message with tool invocations that have multi-part responses', () => {
-      const result = convertToModelMessages([
+    it('should propagate provider metadata to provider-executed tool-result', async () => {
+      const result = await convertToModelMessages([
+        {
+          role: 'assistant',
+          parts: [
+            { type: 'step-start' },
+            {
+              type: 'tool-calculator',
+              state: 'output-available',
+              toolCallId: 'call1',
+              input: { operation: 'multiply', numbers: [3, 4] },
+              output: '12',
+              providerExecuted: true,
+              callProviderMetadata: {
+                testProvider: {
+                  executionTime: 75,
+                },
+              },
+            },
+          ],
+        },
+      ]);
+
+      expect(result).toMatchInlineSnapshot(`
+        [
+          {
+            "content": [
+              {
+                "input": {
+                  "numbers": [
+                    3,
+                    4,
+                  ],
+                  "operation": "multiply",
+                },
+                "providerExecuted": true,
+                "providerOptions": {
+                  "testProvider": {
+                    "executionTime": 75,
+                  },
+                },
+                "toolCallId": "call1",
+                "toolName": "calculator",
+                "type": "tool-call",
+              },
+              {
+                "output": {
+                  "type": "text",
+                  "value": "12",
+                },
+                "providerOptions": {
+                  "testProvider": {
+                    "executionTime": 75,
+                  },
+                },
+                "toolCallId": "call1",
+                "toolName": "calculator",
+                "type": "tool-result",
+              },
+            ],
+            "role": "assistant",
+          },
+        ]
+      `);
+    });
+
+    it('should prefer result provider metadata over call provider metadata for provider-executed tool-result', async () => {
+      const result = await convertToModelMessages([
+        {
+          role: 'assistant',
+          parts: [
+            { type: 'step-start' },
+            {
+              type: 'tool-calculator',
+              state: 'output-available',
+              toolCallId: 'call1',
+              input: { operation: 'multiply', numbers: [3, 4] },
+              output: '12',
+              providerExecuted: true,
+              callProviderMetadata: {
+                testProvider: {
+                  itemId: 'call-item',
+                },
+              },
+              resultProviderMetadata: {
+                testProvider: {
+                  itemId: 'result-item',
+                },
+              },
+            },
+          ],
+        },
+      ]);
+
+      expect(result).toEqual([
+        {
+          role: 'assistant',
+          content: [
+            {
+              type: 'tool-call',
+              toolCallId: 'call1',
+              toolName: 'calculator',
+              input: {
+                operation: 'multiply',
+                numbers: [3, 4],
+              },
+              providerExecuted: true,
+              providerOptions: {
+                testProvider: {
+                  itemId: 'call-item',
+                },
+              },
+            },
+            {
+              type: 'tool-result',
+              toolCallId: 'call1',
+              toolName: 'calculator',
+              output: {
+                type: 'text',
+                value: '12',
+              },
+              providerOptions: {
+                testProvider: {
+                  itemId: 'result-item',
+                },
+              },
+            },
+          ],
+        },
+      ]);
+    });
+
+    it('should handle assistant message with tool invocations that have multi-part responses', async () => {
+      const result = await convertToModelMessages([
         {
           role: 'assistant',
           parts: [
@@ -797,8 +1175,8 @@ describe('convertToModelMessages', () => {
       expect(result).toMatchSnapshot();
     });
 
-    it('should handle conversation with an assistant message that has empty tool invocations', () => {
-      const result = convertToModelMessages([
+    it('should handle conversation with an assistant message that has empty tool invocations', async () => {
+      const result = await convertToModelMessages([
         {
           role: 'user',
           parts: [{ type: 'text', text: 'text1' }],
@@ -812,8 +1190,8 @@ describe('convertToModelMessages', () => {
       expect(result).toMatchSnapshot();
     });
 
-    it('should handle conversation with multiple tool invocations that have step information', () => {
-      const result = convertToModelMessages([
+    it('should handle conversation with multiple tool invocations that have step information', async () => {
+      const result = await convertToModelMessages([
         {
           role: 'assistant',
           parts: [
@@ -856,8 +1234,8 @@ describe('convertToModelMessages', () => {
       expect(result).toMatchSnapshot();
     });
 
-    it('should handle conversation with mix of tool invocations and text', () => {
-      const result = convertToModelMessages([
+    it('should handle conversation with mix of tool invocations and text', async () => {
+      const result = await convertToModelMessages([
         {
           role: 'assistant',
           parts: [
@@ -909,8 +1287,8 @@ describe('convertToModelMessages', () => {
   });
 
   describe('multiple messages', () => {
-    it('should handle a conversation with multiple messages', () => {
-      const result = convertToModelMessages([
+    it('should handle a conversation with multiple messages', async () => {
+      const result = await convertToModelMessages([
         {
           role: 'user',
           parts: [{ type: 'text', text: "What's the weather like?" }],
@@ -960,8 +1338,8 @@ describe('convertToModelMessages', () => {
       `);
     });
 
-    it('should handle conversation with multiple tool invocations and user message at the end', () => {
-      const result = convertToModelMessages([
+    it('should handle conversation with multiple tool invocations and user message at the end', async () => {
+      const result = await convertToModelMessages([
         {
           role: 'assistant',
           parts: [
@@ -1011,21 +1389,170 @@ describe('convertToModelMessages', () => {
   });
 
   describe('error handling', () => {
-    it('should throw an error for unhandled roles', () => {
-      expect(() => {
-        convertToModelMessages([
+    it('should throw an error for unhandled roles', async () => {
+      await expect(async () => {
+        await convertToModelMessages([
           {
             role: 'unknown' as any,
             parts: [{ text: 'unknown role message', type: 'text' }],
           },
         ]);
-      }).toThrow('Unsupported role: unknown');
+      }).rejects.toThrow('Unsupported role: unknown');
     });
   });
 
   describe('when ignoring incomplete tool calls', () => {
-    it('should handle conversation with multiple tool invocations and user message at the end', () => {
-      const result = convertToModelMessages(
+    it('should ignore preliminary tool outputs', async () => {
+      let toModelOutputCalls = 0;
+
+      const result = await convertToModelMessages(
+        [
+          {
+            role: 'assistant',
+            parts: [
+              {
+                type: 'tool-streamingTool',
+                state: 'output-available',
+                toolCallId: 'call-preliminary',
+                input: { task: 'finish the work' },
+                output: { complete: false, progress: 'half finished' },
+                preliminary: true,
+              },
+            ],
+          },
+          {
+            role: 'user',
+            parts: [{ type: 'text', text: 'Continue.' }],
+          },
+        ],
+        {
+          ignoreIncompleteToolCalls: true,
+          tools: {
+            streamingTool: tool({
+              inputSchema: z.object({ task: z.string() }),
+              toModelOutput: ({ output }) => {
+                toModelOutputCalls++;
+                return { type: 'json', value: output };
+              },
+            }),
+          },
+        },
+      );
+
+      expect(toModelOutputCalls).toBe(0);
+      expect(result).toEqual([
+        {
+          role: 'user',
+          content: [{ type: 'text', text: 'Continue.' }],
+        },
+      ]);
+    });
+
+    it('should ignore tool calls that are awaiting approval or have no state', async () => {
+      const result = await convertToModelMessages(
+        [
+          {
+            role: 'assistant',
+            parts: [
+              {
+                type: 'text',
+                text: 'Waiting for completed tool calls.',
+                state: 'done',
+              },
+              {
+                type: 'tool-weather',
+                state: 'approval-requested',
+                toolCallId: 'call-awaiting-approval',
+                input: { city: 'Tokyo' },
+                approval: { id: 'approval-1' },
+              },
+              {
+                type: 'tool-weather',
+                toolCallId: 'call-without-state',
+                input: { city: 'Berlin' },
+              } as any,
+            ],
+          },
+          {
+            role: 'user',
+            parts: [{ type: 'text', text: 'Continue.' }],
+          },
+        ],
+        { ignoreIncompleteToolCalls: true },
+      );
+
+      expect(result).toEqual([
+        {
+          role: 'assistant',
+          content: [
+            {
+              type: 'text',
+              text: 'Waiting for completed tool calls.',
+            },
+          ],
+        },
+        {
+          role: 'user',
+          content: [{ type: 'text', text: 'Continue.' }],
+        },
+      ]);
+    });
+
+    it('should preserve tool calls with approval responses', async () => {
+      const result = await convertToModelMessages(
+        [
+          {
+            role: 'assistant',
+            parts: [
+              {
+                type: 'tool-weather',
+                state: 'approval-responded',
+                toolCallId: 'call-approved',
+                input: { city: 'Tokyo' },
+                approval: { id: 'approval-1', approved: true },
+              },
+            ],
+          },
+        ],
+        { ignoreIncompleteToolCalls: true },
+      );
+
+      expect(result).toEqual([
+        {
+          role: 'assistant',
+          content: [
+            {
+              type: 'tool-call',
+              toolCallId: 'call-approved',
+              toolName: 'weather',
+              input: { city: 'Tokyo' },
+              providerExecuted: undefined,
+            },
+            {
+              type: 'tool-approval-request',
+              approvalId: 'approval-1',
+              toolCallId: 'call-approved',
+              isAutomatic: undefined,
+            },
+          ],
+        },
+        {
+          role: 'tool',
+          content: [
+            {
+              type: 'tool-approval-response',
+              approvalId: 'approval-1',
+              approved: true,
+              reason: undefined,
+              providerExecuted: undefined,
+            },
+          ],
+        },
+      ]);
+    });
+
+    it('should handle conversation with multiple tool invocations and user message at the end', async () => {
+      const result = await convertToModelMessages(
         [
           {
             role: 'assistant',
@@ -1123,8 +1650,8 @@ describe('convertToModelMessages', () => {
   });
 
   describe('when converting dynamic tool invocations', () => {
-    it('should convert a dynamic tool invocation', () => {
-      const result = convertToModelMessages(
+    it('should convert a dynamic tool invocation', async () => {
+      const result = await convertToModelMessages(
         [
           {
             role: 'assistant',
@@ -1193,8 +1720,8 @@ describe('convertToModelMessages', () => {
   });
 
   describe('when converting provider-executed dynamic tool invocations', () => {
-    it('should convert a provider-executed dynamic tool invocation', () => {
-      const result = convertToModelMessages(
+    it('should convert a provider-executed dynamic tool invocation', async () => {
+      const result = await convertToModelMessages(
         [
           {
             role: 'assistant',
@@ -1249,6 +1776,12 @@ describe('convertToModelMessages', () => {
                   "type": "text",
                   "value": "result-1",
                 },
+                "providerOptions": {
+                  "test-provider": {
+                    "key-a": "test-value-1",
+                    "key-b": "test-value-2",
+                  },
+                },
                 "toolCallId": "call-1",
                 "toolName": "screenshot",
                 "type": "tool-result",
@@ -1268,11 +1801,112 @@ describe('convertToModelMessages', () => {
         ]
       `);
     });
+
+    it('should convert a denied provider-executed tool approval request with an execution-denied result', async () => {
+      const result = await convertToModelMessages(
+        [
+          {
+            role: 'assistant',
+            parts: [
+              { type: 'step-start' },
+              {
+                type: 'dynamic-tool',
+                toolName: 'screenshot',
+                state: 'approval-responded',
+                toolCallId: 'call-1',
+                input: { value: 'value-1' },
+                providerExecuted: true,
+                callProviderMetadata: {
+                  'test-provider': {
+                    'key-a': 'test-value-1',
+                  },
+                },
+                approval: {
+                  id: 'approval-1',
+                  approved: false,
+                  reason: 'User denied the request',
+                },
+              },
+            ],
+          },
+          {
+            role: 'user',
+            parts: [{ type: 'text', text: 'Thanks!' }],
+          },
+        ],
+        { ignoreIncompleteToolCalls: true },
+      );
+
+      expect(result).toMatchInlineSnapshot(`
+        [
+          {
+            "content": [
+              {
+                "input": {
+                  "value": "value-1",
+                },
+                "providerExecuted": true,
+                "providerOptions": {
+                  "test-provider": {
+                    "key-a": "test-value-1",
+                  },
+                },
+                "toolCallId": "call-1",
+                "toolName": "screenshot",
+                "type": "tool-call",
+              },
+              {
+                "approvalId": "approval-1",
+                "isAutomatic": undefined,
+                "toolCallId": "call-1",
+                "type": "tool-approval-request",
+              },
+            ],
+            "role": "assistant",
+          },
+          {
+            "content": [
+              {
+                "approvalId": "approval-1",
+                "approved": false,
+                "providerExecuted": true,
+                "reason": "User denied the request",
+                "type": "tool-approval-response",
+              },
+              {
+                "output": {
+                  "reason": "User denied the request",
+                  "type": "execution-denied",
+                },
+                "providerOptions": {
+                  "test-provider": {
+                    "key-a": "test-value-1",
+                  },
+                },
+                "toolCallId": "call-1",
+                "toolName": "screenshot",
+                "type": "tool-result",
+              },
+            ],
+            "role": "tool",
+          },
+          {
+            "content": [
+              {
+                "text": "Thanks!",
+                "type": "text",
+              },
+            ],
+            "role": "user",
+          },
+        ]
+      `);
+    });
   });
 
   describe('when converting tool approval request responses', () => {
-    it('should convert an approved tool approval request (static tool)', () => {
-      const result = convertToModelMessages([
+    it('should convert an approved tool approval request (static tool)', async () => {
+      const result = await convertToModelMessages([
         {
           parts: [
             {
@@ -1329,6 +1963,7 @@ describe('convertToModelMessages', () => {
               },
               {
                 "approvalId": "approval-1",
+                "isAutomatic": undefined,
                 "toolCallId": "call-1",
                 "type": "tool-approval-request",
               },
@@ -1340,6 +1975,7 @@ describe('convertToModelMessages', () => {
               {
                 "approvalId": "approval-1",
                 "approved": true,
+                "providerExecuted": undefined,
                 "reason": undefined,
                 "type": "tool-approval-response",
               },
@@ -1350,8 +1986,8 @@ describe('convertToModelMessages', () => {
       `);
     });
 
-    it('should convert an approved tool approval request (dynamic tool)', () => {
-      const result = convertToModelMessages([
+    it('should convert an approved tool approval request (dynamic tool)', async () => {
+      const result = await convertToModelMessages([
         {
           parts: [
             {
@@ -1409,6 +2045,7 @@ describe('convertToModelMessages', () => {
               },
               {
                 "approvalId": "approval-1",
+                "isAutomatic": undefined,
                 "toolCallId": "call-1",
                 "type": "tool-approval-request",
               },
@@ -1420,6 +2057,7 @@ describe('convertToModelMessages', () => {
               {
                 "approvalId": "approval-1",
                 "approved": true,
+                "providerExecuted": undefined,
                 "reason": undefined,
                 "type": "tool-approval-response",
               },
@@ -1430,8 +2068,102 @@ describe('convertToModelMessages', () => {
       `);
     });
 
-    it('should convert a denied tool approval request and follow up text (static tool)', () => {
-      const result = convertToModelMessages([
+    it('should preserve automatic approval metadata for approved tool results', async () => {
+      const result = await convertToModelMessages([
+        {
+          parts: [
+            {
+              text: 'What is the weather in Tokyo?',
+              type: 'text',
+            },
+          ],
+          role: 'user',
+        },
+        {
+          parts: [
+            { type: 'step-start' },
+            {
+              approval: {
+                approved: true,
+                id: 'approval-1',
+                isAutomatic: true,
+                reason: 'trusted internal tool',
+              },
+              input: {
+                city: 'Tokyo',
+              },
+              output: {
+                weather: 'Sunny',
+              },
+              state: 'output-available',
+              toolCallId: 'call-1',
+              type: 'tool-weather',
+            },
+          ],
+          role: 'assistant',
+        },
+      ]);
+
+      expect(result).toMatchInlineSnapshot(`
+        [
+          {
+            "content": [
+              {
+                "text": "What is the weather in Tokyo?",
+                "type": "text",
+              },
+            ],
+            "role": "user",
+          },
+          {
+            "content": [
+              {
+                "input": {
+                  "city": "Tokyo",
+                },
+                "providerExecuted": undefined,
+                "toolCallId": "call-1",
+                "toolName": "weather",
+                "type": "tool-call",
+              },
+              {
+                "approvalId": "approval-1",
+                "isAutomatic": true,
+                "toolCallId": "call-1",
+                "type": "tool-approval-request",
+              },
+            ],
+            "role": "assistant",
+          },
+          {
+            "content": [
+              {
+                "approvalId": "approval-1",
+                "approved": true,
+                "providerExecuted": undefined,
+                "reason": "trusted internal tool",
+                "type": "tool-approval-response",
+              },
+              {
+                "output": {
+                  "type": "json",
+                  "value": {
+                    "weather": "Sunny",
+                  },
+                },
+                "toolCallId": "call-1",
+                "toolName": "weather",
+                "type": "tool-result",
+              },
+            ],
+            "role": "tool",
+          },
+        ]
+      `);
+    });
+
+    it('should convert a denied tool approval request and follow up text (static tool)', async () => {
+      const result = await convertToModelMessages([
         {
           parts: [
             {
@@ -1494,6 +2226,7 @@ describe('convertToModelMessages', () => {
               },
               {
                 "approvalId": "approval-1",
+                "isAutomatic": undefined,
                 "toolCallId": "call-1",
                 "type": "tool-approval-request",
               },
@@ -1505,8 +2238,18 @@ describe('convertToModelMessages', () => {
               {
                 "approvalId": "approval-1",
                 "approved": false,
+                "providerExecuted": undefined,
                 "reason": "I don't want to approve this",
                 "type": "tool-approval-response",
+              },
+              {
+                "output": {
+                  "reason": "I don't want to approve this",
+                  "type": "execution-denied",
+                },
+                "toolCallId": "call-1",
+                "toolName": "weather",
+                "type": "tool-result",
               },
             ],
             "role": "tool",
@@ -1524,8 +2267,8 @@ describe('convertToModelMessages', () => {
       `);
     });
 
-    it('should convert a denied tool approval request and follow up text (dynamic tool)', () => {
-      const result = convertToModelMessages([
+    it('should convert a denied tool approval request and follow up text (dynamic tool)', async () => {
+      const result = await convertToModelMessages([
         {
           parts: [
             {
@@ -1589,6 +2332,7 @@ describe('convertToModelMessages', () => {
               },
               {
                 "approvalId": "approval-1",
+                "isAutomatic": undefined,
                 "toolCallId": "call-1",
                 "type": "tool-approval-request",
               },
@@ -1600,8 +2344,18 @@ describe('convertToModelMessages', () => {
               {
                 "approvalId": "approval-1",
                 "approved": false,
+                "providerExecuted": undefined,
                 "reason": "I don't want to approve this",
                 "type": "tool-approval-response",
+              },
+              {
+                "output": {
+                  "reason": "I don't want to approve this",
+                  "type": "execution-denied",
+                },
+                "toolCallId": "call-1",
+                "toolName": "weather",
+                "type": "tool-result",
               },
             ],
             "role": "tool",
@@ -1619,8 +2373,8 @@ describe('convertToModelMessages', () => {
       `);
     });
 
-    it('should convert tool output denied (static tool)', () => {
-      const result = convertToModelMessages([
+    it('should convert tool output denied (static tool)', async () => {
+      const result = await convertToModelMessages([
         {
           parts: [
             {
@@ -1677,6 +2431,7 @@ describe('convertToModelMessages', () => {
               },
               {
                 "approvalId": "approval-1",
+                "isAutomatic": undefined,
                 "toolCallId": "call-1",
                 "type": "tool-approval-request",
               },
@@ -1688,6 +2443,7 @@ describe('convertToModelMessages', () => {
               {
                 "approvalId": "approval-1",
                 "approved": false,
+                "providerExecuted": undefined,
                 "reason": "I don't want to approve this",
                 "type": "tool-approval-response",
               },
@@ -1707,8 +2463,77 @@ describe('convertToModelMessages', () => {
       `);
     });
 
-    it('should convert tool output denied (dynamic tool)', () => {
-      const result = convertToModelMessages([
+    it('should convert tool output denied without approval (static tool)', async () => {
+      const result = await convertToModelMessages([
+        {
+          parts: [
+            {
+              text: 'What is the weather in Tokyo?',
+              type: 'text',
+            },
+          ],
+          role: 'user',
+        },
+        {
+          role: 'assistant',
+          parts: [
+            {
+              input: {
+                city: 'Tokyo',
+              },
+              state: 'output-denied',
+              toolCallId: 'call-1',
+              type: 'tool-weather',
+            },
+          ],
+        },
+      ] as unknown as UIMessage[]);
+
+      expect(result).toMatchInlineSnapshot(`
+        [
+          {
+            "content": [
+              {
+                "text": "What is the weather in Tokyo?",
+                "type": "text",
+              },
+            ],
+            "role": "user",
+          },
+          {
+            "content": [
+              {
+                "input": {
+                  "city": "Tokyo",
+                },
+                "providerExecuted": undefined,
+                "toolCallId": "call-1",
+                "toolName": "weather",
+                "type": "tool-call",
+              },
+            ],
+            "role": "assistant",
+          },
+          {
+            "content": [
+              {
+                "output": {
+                  "type": "error-text",
+                  "value": "Tool call execution denied.",
+                },
+                "toolCallId": "call-1",
+                "toolName": "weather",
+                "type": "tool-result",
+              },
+            ],
+            "role": "tool",
+          },
+        ]
+      `);
+    });
+
+    it('should convert tool output denied (dynamic tool)', async () => {
+      const result = await convertToModelMessages([
         {
           parts: [
             {
@@ -1766,6 +2591,7 @@ describe('convertToModelMessages', () => {
               },
               {
                 "approvalId": "approval-1",
+                "isAutomatic": undefined,
                 "toolCallId": "call-1",
                 "type": "tool-approval-request",
               },
@@ -1777,6 +2603,7 @@ describe('convertToModelMessages', () => {
               {
                 "approvalId": "approval-1",
                 "approved": false,
+                "providerExecuted": undefined,
                 "reason": "I don't want to approve this",
                 "type": "tool-approval-response",
               },
@@ -1796,8 +2623,8 @@ describe('convertToModelMessages', () => {
       `);
     });
 
-    it('should convert tool output result with approval and follow up text (static tool)', () => {
-      const result = convertToModelMessages([
+    it('should convert tool output result with approval and follow up text (static tool)', async () => {
+      const result = await convertToModelMessages([
         {
           parts: [
             {
@@ -1861,6 +2688,7 @@ describe('convertToModelMessages', () => {
               },
               {
                 "approvalId": "approval-1",
+                "isAutomatic": undefined,
                 "toolCallId": "call-1",
                 "type": "tool-approval-request",
               },
@@ -1872,6 +2700,7 @@ describe('convertToModelMessages', () => {
               {
                 "approvalId": "approval-1",
                 "approved": true,
+                "providerExecuted": undefined,
                 "reason": undefined,
                 "type": "tool-approval-response",
               },
@@ -1903,8 +2732,208 @@ describe('convertToModelMessages', () => {
       `);
     });
 
-    it('should convert tool error result with approval and follow up text (static tool)', () => {
-      const result = convertToModelMessages([
+    it('should propagate reason from a pending approval request', async () => {
+      const result = await convertToModelMessages([
+        {
+          parts: [
+            {
+              approval: {
+                id: 'a1',
+                requestReason: 'requires operator review',
+              },
+              input: {
+                city: 'Tokyo',
+              },
+              state: 'approval-requested',
+              toolCallId: 'call-1',
+              type: 'tool-weather',
+            },
+          ],
+          role: 'assistant',
+        },
+      ]);
+
+      const assistantMessage = result.find(
+        message => message.role === 'assistant',
+      );
+      expect(assistantMessage?.content).toContainEqual({
+        type: 'tool-approval-request',
+        approvalId: 'a1',
+        toolCallId: 'call-1',
+        isAutomatic: undefined,
+        reason: 'requires operator review',
+      });
+    });
+
+    it('should keep request and response reasons separate after approval', async () => {
+      const result = await convertToModelMessages([
+        {
+          parts: [
+            {
+              approval: {
+                approved: true,
+                id: 'a1',
+                requestReason: 'requires operator review',
+                reason: 'approved by on-call operator',
+              },
+              input: {
+                city: 'Tokyo',
+              },
+              state: 'approval-responded',
+              toolCallId: 'call-1',
+              type: 'tool-weather',
+            },
+          ],
+          role: 'assistant',
+        },
+      ]);
+
+      const assistantMessage = result.find(
+        message => message.role === 'assistant',
+      );
+      expect(assistantMessage?.content).toContainEqual({
+        type: 'tool-approval-request',
+        approvalId: 'a1',
+        toolCallId: 'call-1',
+        isAutomatic: undefined,
+        reason: 'requires operator review',
+      });
+
+      const toolMessage = result.find(message => message.role === 'tool');
+      expect(toolMessage?.content).toContainEqual({
+        type: 'tool-approval-response',
+        approvalId: 'a1',
+        approved: true,
+        providerExecuted: undefined,
+        reason: 'approved by on-call operator',
+      });
+    });
+
+    it('should propagate signature from approval to tool-approval-request part', async () => {
+      const result = await convertToModelMessages([
+        {
+          parts: [
+            {
+              text: 'What is the weather in Tokyo?',
+              type: 'text',
+            },
+          ],
+          role: 'user',
+        },
+        {
+          parts: [
+            {
+              type: 'step-start',
+            },
+            {
+              approval: {
+                approved: true,
+                id: 'a1',
+                signature: 'test-sig',
+              },
+              input: {
+                city: 'Tokyo',
+              },
+              state: 'approval-responded',
+              toolCallId: 'call-1',
+              type: 'tool-weather',
+            },
+          ],
+          role: 'assistant',
+        },
+      ]);
+
+      expect(result).toMatchInlineSnapshot(`
+        [
+          {
+            "content": [
+              {
+                "text": "What is the weather in Tokyo?",
+                "type": "text",
+              },
+            ],
+            "role": "user",
+          },
+          {
+            "content": [
+              {
+                "input": {
+                  "city": "Tokyo",
+                },
+                "providerExecuted": undefined,
+                "toolCallId": "call-1",
+                "toolName": "weather",
+                "type": "tool-call",
+              },
+              {
+                "approvalId": "a1",
+                "isAutomatic": undefined,
+                "signature": "test-sig",
+                "toolCallId": "call-1",
+                "type": "tool-approval-request",
+              },
+            ],
+            "role": "assistant",
+          },
+          {
+            "content": [
+              {
+                "approvalId": "a1",
+                "approved": true,
+                "providerExecuted": undefined,
+                "reason": undefined,
+                "type": "tool-approval-response",
+              },
+            ],
+            "role": "tool",
+          },
+        ]
+      `);
+    });
+
+    it('should not include signature in tool-approval-request when approval has no signature', async () => {
+      const result = await convertToModelMessages([
+        {
+          parts: [
+            {
+              text: 'What is the weather in Tokyo?',
+              type: 'text',
+            },
+          ],
+          role: 'user',
+        },
+        {
+          parts: [
+            {
+              type: 'step-start',
+            },
+            {
+              approval: {
+                approved: true,
+                id: 'a1',
+              },
+              input: {
+                city: 'Tokyo',
+              },
+              state: 'approval-responded',
+              toolCallId: 'call-1',
+              type: 'tool-weather',
+            },
+          ],
+          role: 'assistant',
+        },
+      ]);
+
+      const assistantMessage = result.find(m => m.role === 'assistant')!;
+      const approvalRequest = (assistantMessage.content as any[]).find(
+        (p: any) => p.type === 'tool-approval-request',
+      );
+      expect(approvalRequest).toBeDefined();
+      expect(approvalRequest).not.toHaveProperty('signature');
+    });
+
+    it('should convert tool error result with approval and follow up text (static tool)', async () => {
+      const result = await convertToModelMessages([
         {
           parts: [
             {
@@ -1965,6 +2994,7 @@ describe('convertToModelMessages', () => {
               },
               {
                 "approvalId": "approval-1",
+                "isAutomatic": undefined,
                 "toolCallId": "call-1",
                 "type": "tool-approval-request",
               },
@@ -1976,6 +3006,7 @@ describe('convertToModelMessages', () => {
               {
                 "approvalId": "approval-1",
                 "approved": true,
+                "providerExecuted": undefined,
                 "reason": undefined,
                 "type": "tool-approval-response",
               },
@@ -2007,8 +3038,8 @@ describe('convertToModelMessages', () => {
 
   describe('data part conversion', () => {
     describe('in user messages', () => {
-      it('should convert data parts to text when converter provided', () => {
-        const result = convertToModelMessages<
+      it('should convert data parts to text when converter provided', async () => {
+        const result = await convertToModelMessages<
           UIMessage<unknown, { url: { url: string; content: string } }>
         >(
           [
@@ -2048,8 +3079,8 @@ describe('convertToModelMessages', () => {
       `);
       });
 
-      it('should skip data parts when no converter provided', () => {
-        const result = convertToModelMessages([
+      it('should skip data parts when no converter provided', async () => {
+        const result = await convertToModelMessages([
           {
             role: 'user',
             parts: [
@@ -2074,8 +3105,8 @@ describe('convertToModelMessages', () => {
       `);
       });
 
-      it('should selectively convert data parts', () => {
-        const result = convertToModelMessages<
+      it('should selectively convert data parts', async () => {
+        const result = await convertToModelMessages<
           UIMessage<
             unknown,
             {
@@ -2118,8 +3149,8 @@ describe('convertToModelMessages', () => {
       `);
       });
 
-      it('should convert data parts to file parts', () => {
-        const result = convertToModelMessages<
+      it('should convert data parts to file parts', async () => {
+        const result = await convertToModelMessages<
           UIMessage<
             unknown,
             {
@@ -2178,8 +3209,8 @@ describe('convertToModelMessages', () => {
       `);
       });
 
-      it('should handle multiple data parts of different types', () => {
-        const result = convertToModelMessages<
+      it('should handle multiple data parts of different types', async () => {
+        const result = await convertToModelMessages<
           UIMessage<
             never,
             {
@@ -2252,8 +3283,8 @@ describe('convertToModelMessages', () => {
       `);
       });
 
-      it('should work with messages that have no data parts', () => {
-        const result = convertToModelMessages(
+      it('should work with messages that have no data parts', async () => {
+        const result = await convertToModelMessages(
           [
             {
               role: 'user',
@@ -2273,28 +3304,31 @@ describe('convertToModelMessages', () => {
         );
 
         expect(result).toMatchInlineSnapshot(`
-        [
-          {
-            "content": [
-              {
-                "text": "Hello",
-                "type": "text",
-              },
-              {
-                "data": "https://example.com/image.png",
-                "filename": undefined,
-                "mediaType": "image/png",
-                "type": "file",
-              },
-            ],
-            "role": "user",
-          },
-        ]
-      `);
+          [
+            {
+              "content": [
+                {
+                  "text": "Hello",
+                  "type": "text",
+                },
+                {
+                  "data": {
+                    "type": "url",
+                    "url": "https://example.com/image.png",
+                  },
+                  "filename": undefined,
+                  "mediaType": "image/png",
+                  "type": "file",
+                },
+              ],
+              "role": "user",
+            },
+          ]
+        `);
       });
 
-      it('should preserve order of parts including converted data parts', () => {
-        const result = convertToModelMessages<
+      it('should preserve order of parts including converted data parts', async () => {
+        const result = await convertToModelMessages<
           UIMessage<unknown, { tag: { value: string } }>
         >(
           [
@@ -2350,8 +3384,8 @@ describe('convertToModelMessages', () => {
     });
 
     describe('in assistant messages', () => {
-      it('should convert data parts to text when converter provided', () => {
-        const result = convertToModelMessages<
+      it('should convert data parts to text when converter provided', async () => {
+        const result = await convertToModelMessages<
           UIMessage<unknown, { url: { url: string; content: string } }>
         >(
           [
@@ -2391,8 +3425,8 @@ describe('convertToModelMessages', () => {
         `);
       });
 
-      it('should skip data parts when no converter provided', () => {
-        const result = convertToModelMessages([
+      it('should skip data parts when no converter provided', async () => {
+        const result = await convertToModelMessages([
           {
             role: 'assistant',
             parts: [
@@ -2417,8 +3451,80 @@ describe('convertToModelMessages', () => {
         `);
       });
 
-      it('should selectively convert data parts', () => {
-        const result = convertToModelMessages<
+      it('should not emit empty assistant message for persistent data written before model stream starts', async () => {
+        type WeatherUIMessage = UIMessage<
+          unknown,
+          {
+            weather: {
+              city: string;
+              status: 'loading' | 'success';
+              weather?: string;
+            };
+          }
+        >;
+
+        const recordedMessage =
+          await recordAssistantMessageFromChunks<WeatherUIMessage>([
+            { type: 'start', messageId: 'msg-123' },
+            {
+              type: 'data-weather',
+              id: 'weather-1',
+              data: { city: 'San Francisco', status: 'loading' },
+            },
+            { type: 'start-step' },
+            { type: 'text-start', id: 'text-1' },
+            { type: 'text-delta', id: 'text-1', delta: 'It is sunny.' },
+            { type: 'text-end', id: 'text-1' },
+            { type: 'finish-step' },
+            { type: 'finish' },
+          ]);
+
+        expect(recordedMessage).toMatchInlineSnapshot(`
+          {
+            "id": "msg-123",
+            "metadata": undefined,
+            "parts": [
+              {
+                "data": {
+                  "city": "San Francisco",
+                  "status": "loading",
+                },
+                "id": "weather-1",
+                "type": "data-weather",
+              },
+              {
+                "type": "step-start",
+              },
+              {
+                "providerMetadata": undefined,
+                "state": "done",
+                "text": "It is sunny.",
+                "type": "text",
+              },
+            ],
+            "role": "assistant",
+          }
+        `);
+
+        const result = await convertToModelMessages([recordedMessage]);
+
+        expect(result).toMatchInlineSnapshot(`
+          [
+            {
+              "content": [
+                {
+                  "text": "It is sunny.",
+                  "type": "text",
+                },
+              ],
+              "role": "assistant",
+            },
+          ]
+        `);
+      });
+
+      it('should selectively convert data parts', async () => {
+        const result = await convertToModelMessages<
           UIMessage<
             unknown,
             {
@@ -2461,8 +3567,8 @@ describe('convertToModelMessages', () => {
         `);
       });
 
-      it('should convert data parts to file parts', () => {
-        const result = convertToModelMessages<
+      it('should convert data parts to file parts', async () => {
+        const result = await convertToModelMessages<
           UIMessage<
             unknown,
             {
@@ -2521,8 +3627,8 @@ describe('convertToModelMessages', () => {
         `);
       });
 
-      it('should handle multiple data parts of different types', () => {
-        const result = convertToModelMessages<
+      it('should handle multiple data parts of different types', async () => {
+        const result = await convertToModelMessages<
           UIMessage<
             never,
             {
@@ -2595,8 +3701,8 @@ describe('convertToModelMessages', () => {
         `);
       });
 
-      it('should work with messages that have no data parts', () => {
-        const result = convertToModelMessages(
+      it('should work with messages that have no data parts', async () => {
+        const result = await convertToModelMessages(
           [
             {
               role: 'assistant',
@@ -2624,7 +3730,10 @@ describe('convertToModelMessages', () => {
                   "type": "text",
                 },
                 {
-                  "data": "https://example.com/image.png",
+                  "data": {
+                    "type": "url",
+                    "url": "https://example.com/image.png",
+                  },
                   "filename": undefined,
                   "mediaType": "image/png",
                   "type": "file",
@@ -2636,8 +3745,8 @@ describe('convertToModelMessages', () => {
         `);
       });
 
-      it('should preserve order of parts including converted data parts', () => {
-        const result = convertToModelMessages<
+      it('should preserve order of parts including converted data parts', async () => {
+        const result = await convertToModelMessages<
           UIMessage<unknown, { tag: { value: string } }>
         >(
           [
